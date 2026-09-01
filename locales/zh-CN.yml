@@ -106,10 +106,14 @@ dialog:
 
 tray:
   toggle_visibility: "显示 / 隐藏"
+  check_update: "检查更新"
   quit: "退出"
   tooltip: "AzurPilot"
 
 titlebar:
+  check_update: "检查更新"
+  updating: "正在更新..."
+  update_ready: "更新就绪"
   minimize_to_tray: "最小化到托盘"
   minimize_window: "最小化窗口"
   minimize: "最小化"
@@ -149,6 +153,12 @@ notify:
   default_title: "AzurPilot"
   default_body: "您有一条新通知"
   open: "打开"
+  update_checking: "正在检查 AzurPilot 更新..."
+  update_in_progress: "正在更新 AzurPilot 仓库与依赖..."
+  update_success: "AzurPilot 已更新至最新版本！"
+  update_success_restart: "AzurPilot 更新已就绪，重启应用后生效。"
+  update_already_latest: "当前已经是最新版本。"
+  update_failed: "检查或应用更新失败：%{error}"
 
 autostart:
   unsupported: "当前平台不支持开机自启动"

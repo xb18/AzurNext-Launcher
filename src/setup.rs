@@ -352,12 +352,53 @@ fn setup_git_ca_bundle() {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateMethod {
+    Manual,
+    Background,
+    Startup,
+}
+
+pub fn get_update_method() -> UpdateMethod {
+    get_deploy_config()
+        .as_ref()
+        .and_then(|c| c.get("Deploy"))
+        .and_then(|d| d.get("Update"))
+        .and_then(|u| u.get("UpdateMethod"))
+        .and_then(|v| v.as_str())
+        .map(|s| match s.trim().to_ascii_lowercase().as_str() {
+            "background" => UpdateMethod::Background,
+            "startup" => UpdateMethod::Startup,
+            _ => UpdateMethod::Manual,
+        })
+        .unwrap_or(UpdateMethod::Manual)
+}
+
+pub fn is_runtime_ready() -> bool {
+    venv_python().exists()
+}
+
+pub fn run_repository_and_dependency_update(
+    cancel_requested: Arc<AtomicBool>,
+    mut status_updater: impl FnMut(SplashUpdate),
+) -> Result<()> {
+    let bootstrap_uv = bootstrap_uv_path()?;
+    info!("Running repository git update...");
+    git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
+    info!("Running dependency sync with uv...");
+    uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
+    info!("Repository and dependency update completed successfully");
+    Ok(())
+}
+
 pub fn setup_alas_repo(
     mut status_updater: impl FnMut(SplashUpdate),
     cancel_requested: Arc<AtomicBool>,
     skip_repository_update: bool,
+    skip_dependency_sync: bool,
 ) -> Result<()> {
-    info!("Starting setup for AzurPilot repository...");
+    info!("Starting setup for AzurPilot repository (skip_repo_update={}, skip_dep_sync={})...", skip_repository_update, skip_dependency_sync);
     #[cfg(target_os = "linux")]
     setup_git_ca_bundle();
     // Similar setup to deploy/installer.py
@@ -374,7 +415,7 @@ pub fn setup_alas_repo(
     atomic_failure_cleanup("./config", &cancel_requested)?;
     migrate_dependency_config()?;
     if skip_repository_update {
-        info!("Skipping AzurPilot repository update because preview no-update mode is enabled");
+        info!("Skipping AzurPilot repository update");
         status_updater(
             SplashUpdate::loading(
                 t!("setup.skipping_update"),
@@ -390,15 +431,24 @@ pub fn setup_alas_repo(
         );
         git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
     }
-    status_updater(
-        SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 64)
-            .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
-    );
-    uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
-    status_updater(
-        SplashUpdate::loading(t!("setup.finishing"), t!("setup.ready_to_launch"), 94)
-            .with_subtitle(t!("setup.launching", tip = get_tip())),
-    );
+
+    if skip_dependency_sync {
+        info!("Skipping project dependency sync for fast startup");
+        status_updater(
+            SplashUpdate::loading(t!("setup.finishing"), t!("setup.ready_to_launch"), 94)
+                .with_subtitle(t!("setup.launching", tip = get_tip())),
+        );
+    } else {
+        status_updater(
+            SplashUpdate::loading(t!("setup.installing_deps"), t!("setup.verifying_deps"), 64)
+                .with_subtitle(t!("setup.syncing_deps", tip = get_tip())),
+        );
+        uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
+        status_updater(
+            SplashUpdate::loading(t!("setup.finishing"), t!("setup.ready_to_launch"), 94)
+                .with_subtitle(t!("setup.launching", tip = get_tip())),
+        );
+    }
     Ok(())
 }
 
@@ -1186,15 +1236,26 @@ fn migrate_dependency_config() -> Result<()> {
     let mut found_adb_executable = false;
     let mut found_git_executable = false;
     let mut found_install_dependencies = false;
+    let mut found_update_method = false;
+    let mut in_update_section = false;
     let mut output = String::with_capacity(content.len());
 
     for line in content.lines() {
         let indent_len = line.len() - line.trim_start().len();
         let indent = &line[..indent_len];
         let trimmed = line.trim_start();
-        if trimmed.starts_with("RequirementsFile:") {
+        if trimmed.starts_with("Update:") {
+            in_update_section = true;
+            output.push_str(line);
+        } else if in_update_section && indent_len <= 2 && trimmed.ends_with(':') {
+            in_update_section = false;
+            output.push_str(line);
+        } else if trimmed.starts_with("RequirementsFile:") {
             changed = true;
             continue;
+        } else if trimmed.starts_with("UpdateMethod:") {
+            found_update_method = true;
+            output.push_str(line);
         } else if trimmed.starts_with("PythonExecutable:") {
             found_python_executable = true;
             output.push_str(indent);
@@ -1221,6 +1282,15 @@ fn migrate_dependency_config() -> Result<()> {
                 changed = true;
             } else {
                 output.push_str(line);
+            }
+        } else if trimmed.starts_with("AutoRestartTime:") {
+            output.push_str(line);
+            if !content.contains("UpdateMethod:") && !found_update_method {
+                output.push('\n');
+                output.push_str(indent);
+                output.push_str("UpdateMethod: manual");
+                found_update_method = true;
+                changed = true;
             }
         } else {
             output.push_str(line);
@@ -1250,12 +1320,50 @@ fn migrate_dependency_config() -> Result<()> {
         output.push_str("InstallDependencies: true\n");
         changed = true;
     }
+    if !found_update_method {
+        output.push_str("    UpdateMethod: manual\n");
+        changed = true;
+    }
 
     if changed {
         fs::write(path, output)?;
         info!("Updated self-contained .venv settings in {path}");
     }
 
+    Ok(())
+}
+
+pub fn set_update_method(method: UpdateMethod) -> Result<()> {
+    let path = "./config/deploy.yaml";
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let method_str = match method {
+        UpdateMethod::Manual => "manual",
+        UpdateMethod::Background => "background",
+        UpdateMethod::Startup => "startup",
+    };
+    if content.is_empty() {
+        return Ok(());
+    }
+    let mut output = String::with_capacity(content.len());
+    let mut found = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let indent_len = line.len() - trimmed.len();
+        let indent = &line[..indent_len];
+        if trimmed.starts_with("UpdateMethod:") {
+            output.push_str(indent);
+            output.push_str(&format!("UpdateMethod: {method_str}"));
+            found = true;
+        } else {
+            output.push_str(line);
+        }
+        output.push('\n');
+    }
+    if !found {
+        output.push_str(&format!("    UpdateMethod: {method_str}\n"));
+    }
+    fs::write(path, output)?;
+    info!("UpdateMethod successfully set to {method_str} in {path}");
     Ok(())
 }
 
@@ -2498,5 +2606,12 @@ mod tests {
         assert!(is_reusable_venv_python_version((3, 14, 5)));
         assert!(is_reusable_venv_python_version((3, 14, 6)));
         assert!(!is_reusable_venv_python_version((3, 15, 0)));
+    }
+
+    #[test]
+    fn test_update_method_serde_and_default() {
+        assert_eq!(serde_json::from_str::<UpdateMethod>("\"manual\"").unwrap(), UpdateMethod::Manual);
+        assert_eq!(serde_json::from_str::<UpdateMethod>("\"background\"").unwrap(), UpdateMethod::Background);
+        assert_eq!(serde_json::from_str::<UpdateMethod>("\"startup\"").unwrap(), UpdateMethod::Startup);
     }
 }

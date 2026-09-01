@@ -7,6 +7,7 @@ mod i18n;
 mod launcher_control;
 mod notify;
 mod setup;
+mod updater;
 mod window_util;
 
 #[macro_use]
@@ -529,6 +530,31 @@ fn check_launcher_update_and_restart(mut status_updater: impl FnMut(SplashUpdate
         return Err(err);
     }
     Ok(true)
+}
+
+pub fn check_and_download_launcher_update_payload() -> Result<Option<(String, PathBuf)>> {
+    let current_version = env!("CARGO_PKG_VERSION");
+    let platform_key = launcher_update_platform_key();
+    let manifest_client = launcher_update_http_client(Some(Duration::from_secs(10)), false)?;
+    let manifest = fetch_launcher_update_manifest(&manifest_client)?;
+    let update_available = launcher_version_is_newer(current_version, &manifest.version)
+        .ok_or_else(|| anyhow!("Invalid launcher manifest version: {}", manifest.version))?;
+    if !update_available {
+        return Ok(None);
+    }
+    let Some(platform) = manifest.platforms.get(platform_key) else {
+        return Err(anyhow!("No launcher update payload for platform {platform_key}"));
+    };
+    let current_exe = std::env::current_exe()?;
+    let update_path = launcher_update_temp_path(&current_exe);
+    download_launcher_update(
+        &platform.url,
+        &update_path,
+        &platform.sha256,
+        &mut |_| {},
+    )?;
+    make_executable(&update_path)?;
+    Ok(Some((manifest.version, update_path)))
 }
 
 fn download_launcher_update(
@@ -1868,7 +1894,11 @@ fn main() -> Result<()> {
             window_close,
             window_exit_application,
             window_start_dragging,
-            window_is_maximized
+            window_is_maximized,
+            trigger_update,
+            get_update_status,
+            get_update_method,
+            set_update_method
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -1914,11 +1944,15 @@ fn main() -> Result<()> {
                 let show_item = MenuItemBuilder::new(t!("tray.toggle_visibility"))
                     .id("toggle_visibility")
                     .build(app)?;
+                let update_item = MenuItemBuilder::new(t!("tray.check_update"))
+                    .id("check_update")
+                    .build(app)?;
                 let quit_item = MenuItemBuilder::new(t!("tray.quit"))
                     .id("quit")
                     .build(app)?;
                 let tray_menu = MenuBuilder::new(app)
                     .item(&show_item)
+                    .item(&update_item)
                     .separator()
                     .item(&quit_item)
                     .build()?;
@@ -1958,8 +1992,16 @@ fn main() -> Result<()> {
                                     recreating_main_window_for_menu.clone(),
                                 );
                             }
+                            "check_update" => {
+                                let _ = crate::updater::trigger_update(app.clone(), false);
+                            }
                             "quit" => {
                                 allow_exit.store(true, Ordering::SeqCst);
+                                if let Some(update_path) = crate::updater::take_pending_launcher_update() {
+                                    if let Ok(current_exe) = std::env::current_exe() {
+                                        let _ = replace_launcher_and_restart(&current_exe, &update_path);
+                                    }
+                                }
                                 app.exit(0);
                             }
                             _ => {}
@@ -2051,7 +2093,11 @@ fn main() -> Result<()> {
                             )),
                         );
 
-                        if !preview_no_update {
+                        let update_method = crate::setup::get_update_method();
+                        info!("Configured update method: {:?}", update_method);
+                        let should_run_startup_update = !preview_no_update && update_method == crate::setup::UpdateMethod::Startup;
+
+                        if should_run_startup_update {
                             let launcher_progress = Cell::new(0u8);
                             let mut launcher_status_updater = |mut update: SplashUpdate| {
                                 update.progress = update.progress.max(launcher_progress.get());
@@ -2109,10 +2155,16 @@ fn main() -> Result<()> {
                             setup_running.store(false, Ordering::SeqCst);
                             return;
                         }
+
+                        let runtime_ready = crate::setup::is_runtime_ready();
+                        let skip_repo_update = preview_no_update || update_method != crate::setup::UpdateMethod::Startup;
+                        let skip_dep_sync = preview_no_update || (update_method != crate::setup::UpdateMethod::Startup && runtime_ready);
+
                         if let Err(e) = setup_alas_repo(
                             &mut status_updater,
                             setup_cancel_requested.clone(),
-                            preview_no_update,
+                            skip_repo_update,
+                            skip_dep_sync,
                         ) {
                             error!("{e}");
                             setup_running.store(false, Ordering::SeqCst);
@@ -2224,6 +2276,7 @@ fn main() -> Result<()> {
                             notification_click,
                         );
                         start_launcher_control_stream(port, allow_exit.clone());
+                        crate::updater::start_background_updater_if_enabled(app_handle.clone());
                         status_updater(
                             SplashUpdate::loading(t!("splash.opening"), t!("splash.ready"), 100)
                                 .with_subtitle(format!(
@@ -2519,8 +2572,42 @@ fn window_exit_application(
     exit_control: State<'_, ExitControl>,
 ) -> tauri::Result<()> {
     exit_control.0.store(true, Ordering::SeqCst);
+    if let Some(update_path) = crate::updater::take_pending_launcher_update() {
+        if let Ok(current_exe) = std::env::current_exe() {
+            let _ = replace_launcher_and_restart(&current_exe, &update_path);
+        }
+    }
     app_handle.exit(0);
     Ok(())
+}
+
+#[tauri::command]
+fn trigger_update(app_handle: tauri::AppHandle) -> std::result::Result<String, String> {
+    crate::updater::trigger_update(app_handle, false).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn get_update_status() -> crate::updater::UpdateState {
+    crate::updater::get_update_state()
+}
+
+#[tauri::command]
+fn get_update_method() -> String {
+    match crate::setup::get_update_method() {
+        crate::setup::UpdateMethod::Manual => "manual".to_string(),
+        crate::setup::UpdateMethod::Background => "background".to_string(),
+        crate::setup::UpdateMethod::Startup => "startup".to_string(),
+    }
+}
+
+#[tauri::command]
+fn set_update_method(method: String) -> std::result::Result<(), String> {
+    let m = match method.trim().to_ascii_lowercase().as_str() {
+        "background" => crate::setup::UpdateMethod::Background,
+        "startup" => crate::setup::UpdateMethod::Startup,
+        _ => crate::setup::UpdateMethod::Manual,
+    };
+    crate::setup::set_update_method(m).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -4090,6 +4177,9 @@ fn main_window_titlebar_injection_script() -> String {
             "closePrompt": t!("dialog.confirm_exit"),
             "exitAction": t!("dialog.exit"),
             "minimizeToTrayAction": t!("dialog.minimize_to_tray"),
+            "checkUpdateLabel": t!("titlebar.check_update"),
+            "updatingLabel": t!("titlebar.updating"),
+            "updateReadyLabel": t!("titlebar.update_ready"),
         });
         let i18n_json = serde_json::to_string(&i18n).unwrap();
         let mut s = String::with_capacity(8192);
@@ -4114,13 +4204,13 @@ fn main_window_titlebar_injection_script() -> String {
             if (!document.getElementById('alas-launcher-titlebar-style')) {
                 const style = document.createElement('style');
                 style.id = 'alas-launcher-titlebar-style';
-                style.textContent = ':root{--alas-titlebar-height:44px}#alas-launcher-titlebar{position:fixed;top:0;left:0;right:0;height:var(--alas-titlebar-height);z-index:2147483647;user-select:none;pointer-events:none;background:transparent}#alas-launcher-titlebar *{box-sizing:border-box}.alas-titlebar-drag-zone{position:absolute;inset:0 120px 0 0;height:100%;pointer-events:auto;background:transparent;touch-action:none;app-region:drag;-webkit-app-region:drag}.header-icon,.header-icon *{app-region:no-drag;-webkit-app-region:no-drag}.header-icon{display:flex;align-items:center;gap:8px;padding:0 12px;position:absolute;top:0;right:0;height:100%;pointer-events:auto}.icon{width:12px;height:12px;min-width:12px;min-height:12px;margin:0;padding:0;line-height:1;border-radius:50%;border:none;cursor:pointer;flex:0 0 auto;position:relative;transition:filter 120ms ease;display:inline-flex;align-items:center;justify-content:center}.icon:active{filter:brightness(0.85)}.icon-hide{background:#3b82f6;box-shadow:0 0 0 .5px #2563eb}.icon-close{background:#ff5f57;box-shadow:0 0 0 .5px #e0443e}.icon-minimize{background:#febc2e;box-shadow:0 0 0 .5px #d4a017}.icon-maximize{background:#28c840;box-shadow:0 0 0 .5px #14ae35}.icon svg{width:7px;height:7px;stroke:rgba(0,0,0,.72);fill:none;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity 150ms ease}.header-icon:hover .icon svg{opacity:1}@media(max-width:680px){.alas-titlebar-drag-zone{inset-right:88px}}';
+                style.textContent = ':root{--alas-titlebar-height:44px}#alas-launcher-titlebar{position:fixed;top:0;left:0;right:0;height:var(--alas-titlebar-height);z-index:2147483647;user-select:none;pointer-events:none;background:transparent}#alas-launcher-titlebar *{box-sizing:border-box}.alas-titlebar-drag-zone{position:absolute;inset:0 144px 0 0;height:100%;pointer-events:auto;background:transparent;touch-action:none;app-region:drag;-webkit-app-region:drag}.header-icon,.header-icon *{app-region:no-drag;-webkit-app-region:no-drag}.header-icon{display:flex;align-items:center;gap:8px;padding:0 12px;position:absolute;top:0;right:0;height:100%;pointer-events:auto}.icon{width:12px;height:12px;min-width:12px;min-height:12px;margin:0;padding:0;line-height:1;border-radius:50%;border:none;cursor:pointer;flex:0 0 auto;position:relative;transition:filter 120ms ease;display:inline-flex;align-items:center;justify-content:center}.icon:active{filter:brightness(0.85)}.icon-update{background:rgba(255,255,255,.18);box-shadow:0 0 0 .5px rgba(255,255,255,.25)}.icon-update svg{width:8px;height:8px;fill:#fff;stroke:none;opacity:.85;transition:transform 300ms ease}.icon-update.is-spinning svg{animation:alas-spin 1s linear infinite}@keyframes alas-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.icon-hide{background:#3b82f6;box-shadow:0 0 0 .5px #2563eb}.icon-close{background:#ff5f57;box-shadow:0 0 0 .5px #e0443e}.icon-minimize{background:#febc2e;box-shadow:0 0 0 .5px #d4a017}.icon-maximize{background:#28c840;box-shadow:0 0 0 .5px #14ae35}.icon svg{width:7px;height:7px;stroke:rgba(0,0,0,.72);fill:none;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity 150ms ease}.header-icon:hover .icon svg{opacity:1}@media(max-width:680px){.alas-titlebar-drag-zone{inset-right:112px}}';
                 style.textContent += '#alas-close-menu{position:fixed;top:8px;right:8px;z-index:2147483647;width:244px;padding:11px;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:rgba(22,25,31,.92);box-shadow:0 18px 46px rgba(0,0,0,.3);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);color:#fff;opacity:0;pointer-events:none;transform:translateY(-14px) scale(.72);transform-origin:calc(100% - 16px) 18px;transition:opacity 160ms ease,transform 220ms cubic-bezier(.2,.9,.25,1);app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu.is-open{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}#alas-close-menu *{box-sizing:border-box;app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu-title{margin:0 0 10px;font:500 12px/1.45 "MiSans",sans-serif;color:rgba(255,255,255,.78)}#alas-close-menu-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}#alas-close-menu button{display:flex;align-items:center;justify-content:center;min-width:0;min-height:34px;margin:0;padding:0 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.1);color:#fff;font:600 12px/1 "MiSans",sans-serif;cursor:pointer;transition:background 120ms ease,transform 120ms ease}#alas-close-menu button:hover{transform:translateY(-1px);background:rgba(255,255,255,.18)}#alas-close-menu button:active{transform:translateY(0)}#alas-close-menu button:disabled{opacity:.55;cursor:default;transform:none}#alas-close-menu .alas-close-confirm{border-color:rgba(255,113,106,.38);background:rgba(202,56,52,.82)}#alas-close-menu .alas-close-confirm:hover{background:rgba(225,68,63,.94)}';
                 document.head.appendChild(style);
             }
             const titlebar = document.createElement('div');
             titlebar.id = 'alas-launcher-titlebar';
-            titlebar.innerHTML = '<div class="alas-titlebar-drag-zone" aria-hidden="true"></div><div class="header-icon"><button type="button" class="icon icon-hide" data-action="hide" aria-label="'+i18n.hideLabel+'" title="'+i18n.hideLabel+'"><svg viewBox="0 0 6 6"><rect x="1" y="1" width="4" height="4" rx="1"/><path d="M2 3h2"/></svg></button><button type="button" class="icon icon-minimize" data-action="minimize" aria-label="'+i18n.minimizeLabel+'" title="'+i18n.minimizeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="3" x2="5" y2="3"/></svg></button><button type="button" class="icon icon-maximize" data-action="maximize" aria-label="'+i18n.maximizeLabel+'" title="'+i18n.maximizeTitle+'"><svg viewBox="0 0 6 6" class="svg-restore" style="display:none"><polyline points="1,3 1,1 3,1"/><polyline points="3,5 5,5 5,3"/></svg><svg viewBox="0 0 6 6" class="svg-maximize"><polyline points="1,2.5 1,1 2.5,1"/><polyline points="3.5,5 5,5 5,3.5"/></svg></button><button type="button" class="icon icon-close" data-action="close" aria-label="'+i18n.closeLabel+'" title="'+i18n.closeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="1" x2="5" y2="5"/><line x1="5" y1="1" x2="1" y2="5"/></svg></button></div>';
+            titlebar.innerHTML = '<div class="alas-titlebar-drag-zone" aria-hidden="true"></div><div class="header-icon"><button type="button" class="icon icon-update" data-action="update" aria-label="'+i18n.checkUpdateLabel+'" title="'+i18n.checkUpdateLabel+'"><svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg></button><button type="button" class="icon icon-hide" data-action="hide" aria-label="'+i18n.hideLabel+'" title="'+i18n.hideLabel+'"><svg viewBox="0 0 6 6"><rect x="1" y="1" width="4" height="4" rx="1"/><path d="M2 3h2"/></svg></button><button type="button" class="icon icon-minimize" data-action="minimize" aria-label="'+i18n.minimizeLabel+'" title="'+i18n.minimizeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="3" x2="5" y2="3"/></svg></button><button type="button" class="icon icon-maximize" data-action="maximize" aria-label="'+i18n.maximizeLabel+'" title="'+i18n.maximizeTitle+'"><svg viewBox="0 0 6 6" class="svg-restore" style="display:none"><polyline points="1,3 1,1 3,1"/><polyline points="3,5 5,5 5,3"/></svg><svg viewBox="0 0 6 6" class="svg-maximize"><polyline points="1,2.5 1,1 2.5,1"/><polyline points="3.5,5 5,5 5,3.5"/></svg></button><button type="button" class="icon icon-close" data-action="close" aria-label="'+i18n.closeLabel+'" title="'+i18n.closeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="1" x2="5" y2="5"/><line x1="5" y1="1" x2="1" y2="5"/></svg></button></div>';
             document.body.dataset.alasCustomTitlebar = 'true';
             document.body.prepend(titlebar);
             const dragZone = titlebar.querySelector('.alas-titlebar-drag-zone');
@@ -4187,6 +4277,20 @@ fn main_window_titlebar_injection_script() -> String {
                     event.stopPropagation();
                     try {
                         switch (button.dataset.action) {
+                            case 'update':
+                                button.classList.add('is-spinning');
+                                button.title = i18n.updatingLabel;
+                                try {
+                                    await invoke('trigger_update');
+                                } catch (e) {
+                                    console.error('Failed to trigger update', e);
+                                } finally {
+                                    setTimeout(() => {
+                                        button.classList.remove('is-spinning');
+                                        button.title = i18n.checkUpdateLabel;
+                                    }, 4000);
+                                }
+                                break;
                             case 'hide': await invoke('window_hide'); break;
                             case 'minimize': await invoke('window_minimize'); break;
                             case 'maximize': await invoke('window_toggle_maximize'); await syncMaximizeState(); break;

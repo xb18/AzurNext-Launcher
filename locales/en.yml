@@ -106,10 +106,14 @@ dialog:
 
 tray:
   toggle_visibility: "Show / Hide"
+  check_update: "Check for Updates"
   quit: "Quit"
   tooltip: "AzurPilot"
 
 titlebar:
+  check_update: "Check for Updates"
+  updating: "Updating..."
+  update_ready: "Update Ready"
   minimize_to_tray: "Minimize to tray"
   minimize_window: "Minimize window"
   minimize: "Minimize"
@@ -149,6 +153,12 @@ notify:
   default_title: "AzurPilot"
   default_body: "You have a new notification"
   open: "Open"
+  update_checking: "Checking for AzurPilot updates..."
+  update_in_progress: "Updating AzurPilot repository and dependencies..."
+  update_success: "AzurPilot has been updated to the latest version!"
+  update_success_restart: "AzurPilot update is ready. Restart to apply changes."
+  update_already_latest: "Already up to date."
+  update_failed: "Failed to check or apply updates: %{error}"
 
 autostart:
   unsupported: "Autostart is not supported on this platform"

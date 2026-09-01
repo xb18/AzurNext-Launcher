@@ -139,6 +139,12 @@ Deploy:
     # [默认] 08:00
     # [Default] 08:00
     AutoRestartTime: 08:00
+    # 更新模式 / Update method
+    # [manual] 手动更新（默认）：启动不执行网络更新，极速启动，由用户在界面/托盘主动点击更新
+    # [background] 后台静默更新：启动不阻塞，在后台静默拉取更新并在关闭或下次启动时生效
+    # [startup] 启动时更新：旧版模式，启动时在 Splash 画面更新所有内容
+    # [Default] manual
+    UpdateMethod: manual
 
   Misc:
     # 启用 Discord 富状态展示

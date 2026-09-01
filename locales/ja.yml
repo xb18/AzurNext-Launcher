@@ -106,10 +106,14 @@ dialog:
 
 tray:
   toggle_visibility: "表示 / 非表示"
+  check_update: "アップデートを確認"
   quit: "終了"
   tooltip: "AzurPilot"
 
 titlebar:
+  check_update: "アップデートを確認"
+  updating: "更新中..."
+  update_ready: "更新準備完了"
   minimize_to_tray: "トレイに最小化"
   minimize_window: "ウィンドウを最小化"
   minimize: "最小化"
@@ -149,6 +153,12 @@ notify:
   default_title: "AzurPilot"
   default_body: "新しい通知があります"
   open: "開く"
+  update_checking: "AzurPilot のアップデートを確認中..."
+  update_in_progress: "AzurPilot リポジトリと依存関係を更新中..."
+  update_success: "AzurPilot は最新バージョンに更新されました！"
+  update_success_restart: "AzurPilot のアップデートの準備が完了しました。再起動後に適用されます。"
+  update_already_latest: "すでに最新バージョンです。"
+  update_failed: "アップデートの確認または適用に失敗しました：%{error}"
 
 autostart:
   unsupported: "このプラットフォームでは自動起動に対応していません"

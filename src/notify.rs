@@ -323,6 +323,21 @@ fn clean_text(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+pub fn show_system_notification(
+    app: &tauri::AppHandle,
+    title: &str,
+    body: &str,
+) {
+    let payload = NotifyPayload {
+        instance: None,
+        title: Some(title.to_string()),
+        content: Some(body.to_string()),
+        updata: Some(serde_json::Value::Bool(true)),
+    };
+    let handler: NotificationClickHandler = Arc::new(|| {});
+    show_notification(app, payload, &handler);
+}
+
 #[cfg(test)]
 mod tests {
     use super::NotifyPayload;
