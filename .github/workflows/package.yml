@@ -147,7 +147,7 @@ jobs:
         env:
           ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 }}
           REQUIRE_LAUNCHER_MTLS_IDENTITY: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 != '' && '1' || '' }}
-          LAUNCHER_UPDATE_URL: https://github.com/xb18/alas-launcher/releases/latest/download/stable.json
+          LAUNCHER_UPDATE_URL: https://github.com/xb18/AzurNext-Launcher/releases/latest/download/stable.json
         run: cargo build --verbose --release
       - name: Get git
         uses: knicknic/os-specific-run@v1.0.3
@@ -481,7 +481,7 @@ jobs:
           import os
           from pathlib import Path
 
-          repo = os.environ.get("REPO", "xb18/alas-launcher")
+          repo = os.environ.get("REPO", "xb18/AzurNext-Launcher")
           version = os.environ["VERSION"].strip()
           tag_version = version
           if version.startswith("v"):

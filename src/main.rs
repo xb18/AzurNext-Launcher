@@ -90,7 +90,7 @@ const TIME_BOMB_CONFIG_SOURCE: &str = include_str!("../Cargo.toml");
 const TAURI_CONFIG_SOURCE: &str = include_str!("../tauri.conf.json");
 const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
 const LAUNCHER_UPDATE_FALLBACK_URL: &str =
-    "https://ghfast.top/https://github.com/xb18/alas-launcher/releases/latest/download/stable.json";
+    "https://ghfast.top/https://github.com/xb18/AzurNext-Launcher/releases/latest/download/stable.json";
 const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
 const MINI_LAUNCHER_VERSION: &str = "0.0.1";
 const LAUNCHER_UPDATE_MTLS_IDENTITY: &[u8] =
