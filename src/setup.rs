@@ -379,6 +379,11 @@ pub fn is_runtime_ready() -> bool {
     venv_python().exists()
 }
 
+pub fn is_repo_ready() -> bool {
+    let dir = alas_repo_dir();
+    dir.join("pyproject.toml").exists() && dir.join("gui.py").exists()
+}
+
 pub fn run_repository_and_dependency_update(
     cancel_requested: Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
@@ -414,7 +419,8 @@ pub fn setup_alas_repo(
     ensure_runtime_tools(&bootstrap_uv, &cancel_requested, &mut status_updater)?;
     atomic_failure_cleanup("./config", &cancel_requested)?;
     migrate_dependency_config()?;
-    if skip_repository_update {
+    let should_skip_repo_update = skip_repository_update && is_repo_ready();
+    if should_skip_repo_update {
         info!("Skipping AzurNext repository update");
         status_updater(
             SplashUpdate::loading(

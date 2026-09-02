@@ -2156,9 +2156,10 @@ fn main() -> Result<()> {
                             return;
                         }
 
+                        let repo_ready = crate::setup::is_repo_ready();
                         let runtime_ready = crate::setup::is_runtime_ready();
-                        let skip_repo_update = preview_no_update || update_method != crate::setup::UpdateMethod::Startup;
-                        let skip_dep_sync = preview_no_update || (update_method != crate::setup::UpdateMethod::Startup && runtime_ready);
+                        let skip_repo_update = preview_no_update || (update_method != crate::setup::UpdateMethod::Startup && repo_ready);
+                        let skip_dep_sync = preview_no_update || (update_method != crate::setup::UpdateMethod::Startup && runtime_ready && repo_ready);
 
                         if let Err(e) = setup_alas_repo(
                             &mut status_updater,
