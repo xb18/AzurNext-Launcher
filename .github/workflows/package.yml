@@ -146,7 +146,7 @@ jobs:
       - name: Build
         env:
           ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 }}
-          REQUIRE_LAUNCHER_MTLS_IDENTITY: "1"
+          REQUIRE_LAUNCHER_MTLS_IDENTITY: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 != '' && '1' || '' }}
           LAUNCHER_UPDATE_URL: https://ap-launcher-update.nanoda.work/updata/stable.json
         run: cargo build --verbose --release
       - name: Get git
@@ -212,7 +212,7 @@ jobs:
             tar -xvf adb.zip
       - name: Get AzurPilot
         run: |
-          git clone --depth=1 --filter=blob:none --sparse https://github.com/wess09/AzurPilot.git AzurLaneAutoScript
+          git clone --depth=1 --branch main --filter=blob:none --sparse https://github.com/xb18/AzurPilot.git AzurLaneAutoScript
           git -C AzurLaneAutoScript sparse-checkout set deploy
       - name: Distribute
         uses: knicknic/os-specific-run@v1.0.3
@@ -453,7 +453,7 @@ jobs:
             AzurPilot_Setup_*.exe
 
   deploy-launcher-update-legacy:
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' && secrets.DEPLOY_SSH_KEY != ''
     needs: package
     runs-on: ubuntu-latest
     env:
@@ -566,7 +566,7 @@ jobs:
           "
 
   deploy-launcher-update:
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' && secrets.R2_ACCESS_KEY_ID != ''
     needs: package
     runs-on: ubuntu-latest
     env:
