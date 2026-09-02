@@ -27,7 +27,7 @@
 AppName=AzurNext
 AppVersion={#AppVersion}
 AppPublisher=AzurNext Team
-AppId={{1A779131-3DD5-067C-0ABC-E656396F6879}
+AppId={{0058700E-B1AC-4A8B-A96C-D77E353B66F0}
 
 DefaultDirName={autopf}\AzurNext
 AppendDefaultDirName=yes
@@ -211,7 +211,7 @@ end;
 
 function PrepareAgreementWrapper: Boolean;
 begin
-  AgreementWrapperPath := ExpandConstant('{tmp}\azurpilot_agreement_wrapper.html');
+  AgreementWrapperPath := ExpandConstant('{tmp}\azurnext_agreement_wrapper.html');
   Result := SaveStringToFile(AgreementWrapperPath, BuildAgreementWrapperHtml, False);
 end;
 

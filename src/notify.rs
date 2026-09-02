@@ -28,13 +28,13 @@ use tracing::{debug, info, warn};
 pub type NotificationClickHandler = Arc<dyn Fn() + Send + Sync + 'static>;
 
 #[cfg(windows)]
-const WINDOWS_APP_ID: &str = "moe.taiho.alas-launcher.notification";
+const WINDOWS_APP_ID: &str = "moe.taiho.azurnext-launcher.notification";
 
 #[cfg(windows)]
-const WINDOWS_APP_ID_UPDATE: &str = "moe.taiho.alas-launcher.notification.update";
+const WINDOWS_APP_ID_UPDATE: &str = "moe.taiho.azurnext-launcher.notification.update";
 
 #[cfg(windows)]
-const WINDOWS_APP_ID_ANNOUNCEMENT: &str = "moe.taiho.alas-launcher.notification.announcement";
+const WINDOWS_APP_ID_ANNOUNCEMENT: &str = "moe.taiho.azurnext-launcher.notification.announcement";
 
 fn windows_app_name() -> String {
     t!("notify.info_app_name").to_string()

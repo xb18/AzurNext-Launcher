@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>alas-launcher</string>
 	<key>CFBundleIdentifier</key>
-	<string>moe.taiho.alas-launcher</string>
+	<string>moe.taiho.azurnext-launcher</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
