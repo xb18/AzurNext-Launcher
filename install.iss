@@ -1,5 +1,5 @@
 ; ==========================================================================
-;  AzurPilot Installer Script
+;  AzurNext Installer Script
 ;  Inno Setup 7 · Admin privileges · 简体中文
 ; ==========================================================================
 
@@ -8,7 +8,7 @@
 #endif
 
 #ifndef OutputBaseFilename
-  #define OutputBaseFilename "AzurPilot_Setup"
+  #define OutputBaseFilename "AzurNext_Setup"
 #endif
 
 #ifndef PackageRoot
@@ -24,14 +24,14 @@
 #endif
 
 [Setup]
-AppName=AzurPilot
+AppName=AzurNext
 AppVersion={#AppVersion}
-AppPublisher=AzurPilot Team
+AppPublisher=AzurNext Team
 AppId={{1A779131-3DD5-067C-0ABC-E656396F6879}
 
-DefaultDirName={autopf}\AzurPilot
+DefaultDirName={autopf}\AzurNext
 AppendDefaultDirName=yes
-DefaultGroupName=AzurPilot
+DefaultGroupName=AzurNext
 OutputDir=.
 OutputBaseFilename={#OutputBaseFilename}
 Compression=lzma
@@ -81,8 +81,8 @@ Source: "{#SetupRoot}\vcredist_x64.exe";               DestDir: "{tmp}"; Flags: 
 Source: "{#SetupRoot}\vcredist_x86.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
 
 [Icons]
-Name: "{autoprograms}\AzurPilot"; Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\AzurPilot";  Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\AzurNext"; Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\AzurNext";  Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 ; --------------------------------------------------------------------------
 ;  安装后执行：VC++ / WebView2 / 启动器
@@ -107,7 +107,7 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; \
   Flags: waituntilterminated skipifdoesntexist
 
 Filename: "{app}\alas-launcher.exe"; \
-  Description: "{cm:LaunchProgram,AzurPilot}"; \
+  Description: "{cm:LaunchProgram,AzurNext}"; \
   WorkingDir: "{app}"; \
   Flags: nowait postinstall skipifsilent
 
@@ -239,7 +239,7 @@ begin
   AgreementPage := CreateCustomPage(
     wpSelectDir,
     '用户协议与隐私声明',
-    '请阅读页面内容，勾选同意后继续安装 AzurPilot。'
+    '请阅读页面内容，勾选同意后继续安装 AzurNext。'
   );
 
   BrowserTop := 0;
@@ -363,14 +363,14 @@ begin
     Result := CompareText(P, CanonicalDir(ExpandConstant('{commonpf64}'))) = 0;
 end;
 
-function AddAzurPilotIfBareContainer(const Dir: String): String;
+function AddAzurNextIfBareContainer(const Dir: String): String;
 var
   D: String;
 begin
   D := CanonicalDir(Dir);
   Result := D;
   if IsBareProgramFilesPath(D) or IsDriveRootPath(D) then
-    Result := AddBackslash(D) + 'AzurPilot';
+    Result := AddBackslash(D) + 'AzurNext';
 end;
 
 function IsUnderProgramFilesPath(const Path: String): Boolean;
@@ -431,14 +431,14 @@ begin
       MsgBox(
         '指挥官，这里是禁区！不能在受保护目录安装：' + #13#10 +
         Dir + #13#10#13#10 +
-        '请改用默认目录，或选择例如 D:\Apps\AzurPilot',
+        '请改用默认目录，或选择例如 D:\Apps\AzurNext',
         mbError, MB_OK
       );
       Result := False;
       Exit;
     end;
 
-    FixedDir := AddAzurPilotIfBareContainer(Dir);
+    FixedDir := AddAzurNextIfBareContainer(Dir);
     if CompareText(FixedDir, Dir) <> 0 then
     begin
       WizardForm.DirEdit.Text := FixedDir;
@@ -689,19 +689,19 @@ begin
 
     usPostUninstall:
       begin
-        DesktopPath := ExpandConstant('{autodesktop}\AzurPilot.lnk');
+        DesktopPath := ExpandConstant('{autodesktop}\AzurNext.lnk');
         if FileExists(DesktopPath) then
           DeleteFile(DesktopPath);
-        DesktopPath := ExpandConstant('{commondesktop}\AzurPilot.lnk');
+        DesktopPath := ExpandConstant('{commondesktop}\AzurNext.lnk');
         if FileExists(DesktopPath) then
           DeleteFile(DesktopPath);
-        DesktopPath := ExpandConstant('{userdesktop}\AzurPilot.lnk');
+        DesktopPath := ExpandConstant('{userdesktop}\AzurNext.lnk');
         if FileExists(DesktopPath) then
           DeleteFile(DesktopPath);
 
         KeepData :=
           MsgBox(
-            '是否保留 AzurPilot 的配置和数据文件？不知火可以先帮你收进仓库。' + #13#10 +
+            '是否保留 AzurNext 的配置和数据文件？不知火可以先帮你收进仓库。' + #13#10 +
             ExpandConstant('{app}') + #13#10#13#10 +
             '点击「是」保留数据，点击「否」让蛮啾清空这个目录。',
             mbConfirmation,

@@ -1,14 +1,14 @@
 Deploy:
   Git:
-    # AzurPilot 仓库地址
-    # URL of AzurPilot repository
-    # [国内用户] 使用 'git://git.pull/AzurPilot' 获得更快更稳定的下载
-    # [CN user] Use 'git://git.pull/AzurPilot' for faster and more stable download
-    # [其他用户] 使用 'https://github.com/wess09/AzurPilot'
-    # [Other] Use 'https://github.com/wess09/AzurPilot'
-    Repository: https://github.com/xb18/AzurPilot
-    # AzurPilot 分支
-    # Branch of AzurPilot
+    # AzurNext 仓库地址
+    # URL of AzurNext repository
+    # [国内用户] 使用 'git://git.pull/AzurNext' 获得更快更稳定的下载
+    # [CN user] Use 'git://git.pull/AzurNext' for faster and more stable download
+    # [其他用户] 使用 'https://github.com/wess09/AzurNext'
+    # [Other] Use 'https://github.com/wess09/AzurNext'
+    Repository: https://github.com/xb18/AzurNext
+    # AzurNext 分支
+    # Branch of AzurNext
     # [开发者] 使用 'dev'、'app' 等分支体验新功能
     # [Developer] Use 'dev', 'app', etc, to try new features
     # [其他用户] 使用 'main'，稳定分支
@@ -31,8 +31,8 @@ Deploy:
     # [其他情况] 连接到不受信任的网络时使用 false
     # [Other] Use false to when connected to an untrusted network
     SSLVerify: true
-    # 启动时自动更新 AzurPilot
-    # Update AzurPilot at startup
+    # 启动时自动更新 AzurNext
+    # Update AzurNext at startup
     # [大多数情况] 使用 true
     # [In most cases] Use true
     AutoUpdate: true
@@ -118,8 +118,8 @@ Deploy:
   Update:
     # 启用自动更新和内置更新功能
     # Use auto update and builtin updater feature
-    # 可能会引发问题 https://github.com/wess09/AzurPilot/issues/876
-    # This may cause problem https://github.com/wess09/AzurPilot/issues/876
+    # 可能会引发问题 https://github.com/wess09/AzurNext/issues/876
+    # This may cause problem https://github.com/wess09/AzurNext/issues/876
     EnableReload: true
     # 每隔 X 分钟检查更新
     # Check update every X minute
@@ -130,9 +130,9 @@ Deploy:
     CheckUpdateInterval: 5
     # 定时重启时间
     # Scheduled restart time
-    # 如果有更新，AzurPilot 会在此时间每天自动重启并更新，
+    # 如果有更新，AzurNext 会在此时间每天自动重启并更新，
     # 并恢复重启前正在运行的所有实例
-    # If there are updates, AzurPilot will automatically restart and update at this time every day
+    # If there are updates, AzurNext will automatically restart and update at this time every day
     # and run all ap instances that running before restarted
     # [禁用] null
     # [Disable] null
@@ -216,13 +216,13 @@ Deploy:
     # Follow system DPI scaling
     # [大多数情况] true
     # [In most cases] true
-    # [少数情况] 如果你的屏幕分辨率低但 DPI 缩放高，使用 false 可以让 AzurPilot 显示得更小
-    # [In few cases] false to make AzurPilot smaller, if you have a low resolution but high DPI scaling.
+    # [少数情况] 如果你的屏幕分辨率低但 DPI 缩放高，使用 false 可以让 AzurNext 显示得更小
+    # [In few cases] false to make AzurNext smaller, if you have a low resolution but high DPI scaling.
     DpiScaling: true
     # --key. WebUI 密码
     # --key. Password of web ui
-    # 将 AzurPilot 暴露到公网时很有用
-    # Useful when expose AzurPilot to the public network
+    # 将 AzurNext 暴露到公网时很有用
+    # Useful when expose AzurNext to the public network
     Password: null
     # --cdn. 使用 jsdelivr CDN 加载 PyWebIO 静态文件（css、js）
     # --cdn. Use jsdelivr cdn for pywebio static files (css, js).

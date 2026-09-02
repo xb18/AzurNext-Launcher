@@ -1,4 +1,4 @@
-﻿---
+---
 description:
 alwaysApply: true
 ---
@@ -13,7 +13,7 @@ alwaysApply: true
 
 ## 项目概述
 
-**AzurPilot Launcher** 是 AzurPilot 的跨平台（Windows / macOS / Linux）桌面原生启动器与外壳程序，基于 **Tauri 2 + Rust** 构建。
+**AzurNext Launcher** 是 AzurNext 的跨平台（Windows / macOS / Linux）桌面原生启动器与外壳程序，基于 **Tauri 2 + Rust** 构建。
 它负责内嵌与管理独立的 Python 3.14.6 运行时环境（基于 `uv`），管理本地仓库更新与依赖同步，启动并监控本地 Python WebUI 后端（`gui.py`），并提供原生系统集成（启动画面、系统托盘、多语言原生通知、自定义无边框标题栏等）。
 
 **核心设计约束**：

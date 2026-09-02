@@ -1840,7 +1840,7 @@ fn main() -> Result<()> {
     let preview_no_update = preview_crash || preview_no_update_arg_present();
     let start_minimized = start_minimized_arg_present();
 
-    info!("=== AzurPilot starting ===");
+    info!("=== AzurNext starting ===");
     info!("Launcher log file: log/{}", today_launcher_log_filename());
     if preview_no_update {
         info!("Preview no-update mode enabled; skipping launcher update check");
@@ -1965,7 +1965,7 @@ fn main() -> Result<()> {
                 info!("Building tray icon...");
                 let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                     .icon(icon)
-                    .tooltip("AzurPilot")
+                    .tooltip("AzurNext")
                     .menu(&tray_menu);
 
                 // On Windows, show menu on right click
@@ -3208,7 +3208,7 @@ fn backend_error_html(port: u16, error_detail: &str) -> String {
         <button id="launcher-log-button" class="secondary-button" type="button">{download_launcher_log}</button>
         <span id="retry-status" class="status"></span>
       </div>
-      <div class="footer">AzurPilot · {connection_info}</div>
+      <div class="footer">AzurNext · {connection_info}</div>
     </div>
   </main>
   <script>
@@ -3807,7 +3807,7 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
     </video>
     <div id="splash-drag-region" class="top-bar">
       <div class="brand-zone">
-        <span class="app-title">AzurPilot</span>
+        <span class="app-title">AzurNext</span>
         <span class="app-version">v$LAUNCHER_VERSION</span>
       </div>
       <div class="top-right">

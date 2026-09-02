@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AzurPilot",
+  "productName": "AzurNext",
   "version": "2.1.8",
   "identifier": "moe.taiho.alas-launcher",
   "app": {
@@ -8,7 +8,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "AzurPilot",
+        "title": "AzurNext",
         "width": 1280,
         "height": 880,
         "resizable": true,
@@ -20,7 +20,7 @@
       },
       {
         "label": "splash",
-        "title": "AzurPilot",
+        "title": "AzurNext",
         "width": 800,
         "height": 450,
         "resizable": false,

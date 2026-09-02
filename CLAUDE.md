@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-AzurPilot Launcher 是 [AzurPilot](https://github.com/wess09/AzurPilot) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它通过内嵌的 `uv` 二进制文件管理独立的 Python 3.14.6 环境，处理基于 git 的更新，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含启动画面、系统托盘、通知和自定义标题栏）。
+AzurNext Launcher 是 [AzurNext](https://github.com/xb18/AzurNext) 的跨平台（Windows/macOS/Linux）桌面启动器，基于 **Tauri 2 + Rust** 构建。它通过内嵌的 `uv` 二进制文件管理独立的 Python 3.14.6 环境，处理基于 git 的更新，启动 Python WebUI 后端（`gui.py`），并提供原生 webview 壳（含启动画面、系统托盘、通知和自定义标题栏）。
 
 ## 构建与开发命令
 

@@ -139,7 +139,7 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<bool
         }
     }
 
-    // 阶段 2：检查并拉取 AzurPilot 仓库代码与 uv 依赖
+    // 阶段 2：检查并拉取 AzurNext 仓库代码与 uv 依赖
     set_update_state(UpdateState::Updating);
     let cancel = Arc::new(AtomicBool::new(false));
     if let Err(err) = run_repository_and_dependency_update(cancel, |_| {}) {

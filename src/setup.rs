@@ -210,7 +210,7 @@ fn alas_repo_dir() -> PathBuf {
             }
         }
     }
-    panic!("Cannot find AzurPilot repo folder");
+    panic!("Cannot find AzurNext repo folder");
 }
 
 fn prepend_path_to_env(key: &str, path: PathBuf) {
@@ -398,7 +398,7 @@ pub fn setup_alas_repo(
     skip_repository_update: bool,
     skip_dependency_sync: bool,
 ) -> Result<()> {
-    info!("Starting setup for AzurPilot repository (skip_repo_update={}, skip_dep_sync={})...", skip_repository_update, skip_dependency_sync);
+    info!("Starting setup for AzurNext repository (skip_repo_update={}, skip_dep_sync={})...", skip_repository_update, skip_dependency_sync);
     #[cfg(target_os = "linux")]
     setup_git_ca_bundle();
     // Similar setup to deploy/installer.py
@@ -415,7 +415,7 @@ pub fn setup_alas_repo(
     atomic_failure_cleanup("./config", &cancel_requested)?;
     migrate_dependency_config()?;
     if skip_repository_update {
-        info!("Skipping AzurPilot repository update");
+        info!("Skipping AzurNext repository update");
         status_updater(
             SplashUpdate::loading(
                 t!("setup.skipping_update"),
@@ -1567,7 +1567,7 @@ fn pypi_probe_http_client() -> Option<Client> {
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
-        HeaderValue::from_static("AzurPilot Launcher PyPI probe"),
+        HeaderValue::from_static("AzurNext Launcher PyPI probe"),
     );
     headers.insert(
         ACCEPT,
@@ -2154,7 +2154,7 @@ fn git_update_splash(
 fn git_section_progress(section: &str) -> Option<u8> {
     if section.contains("SHOW DEPLOY CONFIG") {
         Some(18)
-    } else if section.contains("UPDATE AZURPILOT") {
+    } else if section.contains("UPDATE AZURPILOT") || section.contains("UPDATE AZURNEXT") {
         Some(20)
     } else if section.contains("GIT INIT") {
         Some(22)

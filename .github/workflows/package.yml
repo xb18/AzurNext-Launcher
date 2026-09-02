@@ -1,4 +1,4 @@
-name: Pack AzurPilot
+name: Pack AzurNext
 
 on:
   push:
@@ -210,16 +210,16 @@ jobs:
           windows: |
             curl -L -o adb.zip https://dl.google.com/android/repository/platform-tools-latest-windows.zip
             tar -xvf adb.zip
-      - name: Get AzurPilot
+      - name: Get AzurNext
         run: |
-          git clone --depth=1 --branch main --filter=blob:none --sparse https://github.com/xb18/AzurPilot.git AzurLaneAutoScript
+          git clone --depth=1 --branch main --filter=blob:none --sparse https://github.com/xb18/AzurNext.git AzurLaneAutoScript
           git -C AzurLaneAutoScript sparse-checkout set deploy
       - name: Distribute
         uses: knicknic/os-specific-run@v1.0.3
         with:
           macos: |
             set -eux
-            rm -rf package-root AzurPilot.app
+            rm -rf package-root AzurNext.app
             mkdir -p package-root/AzurLaneAutoScript
             ditto AzurLaneAutoScript/deploy package-root/AzurLaneAutoScript/deploy
 
@@ -252,24 +252,24 @@ jobs:
             GIT_EXEC_PATH="$PWD/.venv/libexec/git-core" GIT_TEMPLATE_DIR="$PWD/.venv/share/git-core/templates" .venv/bin/git ls-remote https://github.com/git/git.git HEAD
 
             cd ${{ github.workspace }}
-            mkdir -p AzurPilot.app/Contents/MacOS
-            cp target/release/alas-launcher AzurPilot.app/Contents/MacOS/
-            mkdir -p AzurPilot.app/Contents/Resources
-            cp icons/icon.icns AzurPilot.app/Contents/Resources/
-            ditto package-root/AzurLaneAutoScript AzurPilot.app/Contents/AzurLaneAutoScript
-            cp Info.plist AzurPilot.app/Contents/
-            rdfind -minsize 128 -makehardlinks true AzurPilot.app
+            mkdir -p AzurNext.app/Contents/MacOS
+            cp target/release/alas-launcher AzurNext.app/Contents/MacOS/
+            mkdir -p AzurNext.app/Contents/Resources
+            cp icons/icon.icns AzurNext.app/Contents/Resources/
+            ditto package-root/AzurLaneAutoScript AzurNext.app/Contents/AzurLaneAutoScript
+            cp Info.plist AzurNext.app/Contents/
+            rdfind -minsize 128 -makehardlinks true AzurNext.app
             uv run python - <<EOF
             import tarfile, lzma
             with tarfile.open('AP-${{ runner.os }}-$(uname -m).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('AzurPilot.app')
+              t.add('AzurNext.app')
             EOF
 
-            cp deploy.mac-cn.yaml AzurPilot.app/Contents/AzurLaneAutoScript/config/deploy.yaml
+            cp deploy.mac-cn.yaml AzurNext.app/Contents/AzurLaneAutoScript/config/deploy.yaml
             uv run python - <<EOF
             import tarfile, lzma
             with tarfile.open('AP-CN-${{ runner.os }}-$(uname -m).tar.xz', 'x:xz', preset=9|lzma.PRESET_EXTREME) as t:
-              t.add('AzurPilot.app')
+              t.add('AzurNext.app')
             EOF
           linux: |
             set -eux
@@ -387,7 +387,7 @@ jobs:
           }
           & $iscc install.iss `
             "/DAppVersion=$env:PACKAGE_VERSION" `
-            "/DOutputBaseFilename=AzurPilot_Setup_$env:PACKAGE_VERSION" `
+            "/DOutputBaseFilename=AzurNext_Setup_$env:PACKAGE_VERSION" `
             "/DPackageRoot=package-root\AzurLaneAutoScript" `
             "/DSetupRoot=setup"
       - name: Prepare launcher updater payload
@@ -432,7 +432,8 @@ jobs:
           path: |
             AzurLaneAutoScript-${{ runner.os }}-*
             AP-${{ runner.os }}-*
-            AzurPilot_Setup_*.exe
+            AN-${{ runner.os }}-*
+            AzurNext_Setup_*.exe
       - name: Upload artifacts (CN)
         uses: actions/upload-artifact@v4
         with:
@@ -440,6 +441,7 @@ jobs:
           path: |
             AzurLaneAutoScript-CN-${{ runner.os }}-*
             AP-CN-${{ runner.os }}-*
+            AN-CN-${{ runner.os }}-*
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
@@ -449,8 +451,10 @@ jobs:
             AzurLaneAutoScript-${{ runner.os }}-*
             AzurLaneAutoScript-CN-${{ runner.os }}-*
             AP-${{ runner.os }}-*
+            AN-${{ runner.os }}-*
             AP-CN-${{ runner.os }}-*
-            AzurPilot_Setup_*.exe
+            AN-CN-${{ runner.os }}-*
+            AzurNext_Setup_*.exe
 
   publish-release-manifest:
     if: github.ref_type == 'tag'

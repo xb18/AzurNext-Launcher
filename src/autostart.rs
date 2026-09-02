@@ -9,7 +9,7 @@ pub struct AutostartStatus {
 }
 
 #[cfg(windows)]
-const RUN_VALUE_NAME: &str = "AzurPilot";
+const RUN_VALUE_NAME: &str = "AzurNext";
 
 #[cfg(windows)]
 const RUN_KEY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
