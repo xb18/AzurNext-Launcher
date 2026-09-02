@@ -30,7 +30,8 @@ AppPublisher=AzurNext Team
 AppId={{0058700E-B1AC-4A8B-A96C-D77E353B66F0}
 
 DefaultDirName={autopf}\AzurNext
-AppendDefaultDirName=yes
+AppendDefaultDirName=no
+DisableDirPage=no
 DefaultGroupName=AzurNext
 OutputDir=.
 OutputBaseFilename={#OutputBaseFilename}
@@ -119,6 +120,9 @@ Filename: "{app}\alas-launcher.exe"; \
 //  Wrapper 内用 iframe 加载线上协议页，强制 scrolling="yes" 保证滚动条可用。
 // ==========================================================================
 const
+  // 是否展示用户协议与隐私声明页面（暂时隐藏设为 False，需要启用时改为 True）
+  ENABLE_AGREEMENT_PAGE = False;
+
   WS_CHILD = $40000000;
   WS_VISIBLE = $10000000;
   WS_BORDER = $00800000;
@@ -282,7 +286,8 @@ end;
 // ==========================================================================
 procedure InitializeWizard;
 begin
-  CreateAgreementPage;
+  if ENABLE_AGREEMENT_PAGE then
+    CreateAgreementPage;
 
   ETALabel := TNewStaticText.Create(WizardForm);
   ETALabel.Parent := WizardForm.InstallingPage;
@@ -412,7 +417,7 @@ var
 begin
   Result := True;
 
-  if Assigned(AgreementPage) and (CurPageID = AgreementPage.ID) then
+  if ENABLE_AGREEMENT_PAGE and Assigned(AgreementPage) and (CurPageID = AgreementPage.ID) then
   begin
     if not AgreementCheck.Checked then
     begin
