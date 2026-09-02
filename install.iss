@@ -59,11 +59,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ;  目录权限：Inno 自带 Permissions 做首轮设置，[Code] 中 icacls 做兜底修复
 ; --------------------------------------------------------------------------
 [Dirs]
-Name: "{app}";          Permissions: users-modify
-Name: "{app}\config";   Permissions: users-modify
-Name: "{app}\deploy";   Permissions: users-modify
-Name: "{app}\.venv";    Permissions: users-modify
-Name: "{app}\bootstrap";  Permissions: users-modify
+Name: "{app}";            Permissions: users-full
+Name: "{app}\config";     Permissions: users-full
+Name: "{app}\deploy";     Permissions: users-full
+Name: "{app}\.venv";      Permissions: users-full
+Name: "{app}\bootstrap";  Permissions: users-full
+Name: "{app}\log";        Permissions: users-full
 
 
 ; --------------------------------------------------------------------------
@@ -71,10 +72,10 @@ Name: "{app}\bootstrap";  Permissions: users-modify
 ; --------------------------------------------------------------------------
 [Files]
 ; 应用本体
-Source: "{#PackageRoot}\alas-launcher.exe";  DestDir: "{app}";          Flags: ignoreversion; Permissions: users-modify
-Source: "{#PackageRoot}\config\*";           DestDir: "{app}\config";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
-Source: "{#PackageRoot}\deploy\*";           DestDir: "{app}\deploy";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
-Source: "{#PackageRoot}\bootstrap\*";        DestDir: "{app}\bootstrap";  Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-modify
+Source: "{#PackageRoot}\alas-launcher.exe";  DestDir: "{app}";          Flags: ignoreversion; Permissions: users-full
+Source: "{#PackageRoot}\config\*";           DestDir: "{app}\config";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-full
+Source: "{#PackageRoot}\deploy\*";           DestDir: "{app}\deploy";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-full
+Source: "{#PackageRoot}\bootstrap\*";        DestDir: "{app}\bootstrap";  Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-full
 
 ; 运行时安装器（释放到临时目录，安装后自动清理）
 Source: "{#SetupRoot}\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
@@ -110,7 +111,7 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; \
 Filename: "{app}\alas-launcher.exe"; \
   Description: "{cm:LaunchProgram,AzurNext}"; \
   WorkingDir: "{app}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Code]
 
@@ -618,8 +619,33 @@ begin
 end;
 
 // ==========================================================================
+//  设置快捷方式以管理员身份运行 (SLDF_RUNAS_USER: 偏移 0x15, 标志位 0x20)
+// ==========================================================================
+procedure SetRunAsAdmin(const FileName: String);
+var
+  Stream: TFileStream;
+  Flags: Byte;
+begin
+  if not FileExists(FileName) then Exit;
+  try
+    Stream := TFileStream.Create(FileName, $0042);
+    try
+      Stream.Seek($15, soFromBeginning);
+      Stream.Read(Flags, 1);
+      Flags := Flags or $20;
+      Stream.Seek($15, soFromBeginning);
+      Stream.Write(Flags, 1);
+    finally
+      Stream.Free;
+    end;
+  except
+  end;
+end;
+
+// ==========================================================================
 //  安装步骤回调
 //  ssPostInstall：权限修复 → deploy.yaml 还原
+//  ssDone：快捷方式提升为管理员启动
 // ==========================================================================
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
@@ -629,6 +655,15 @@ begin
 
     if KeepDeployYaml and (DeployYamlBackupPath <> '') then
       FileCopy(DeployYamlBackupPath, ExpandConstant('{app}\config\deploy.yaml'), False);
+  end
+  else if CurStep = ssDone then
+  begin
+    SetRunAsAdmin(ExpandConstant('{autodesktop}\AzurNext.lnk'));
+    SetRunAsAdmin(ExpandConstant('{autoprograms}\AzurNext.lnk'));
+    SetRunAsAdmin(ExpandConstant('{userdesktop}\AzurNext.lnk'));
+    SetRunAsAdmin(ExpandConstant('{commondesktop}\AzurNext.lnk'));
+    SetRunAsAdmin(ExpandConstant('{userprograms}\AzurNext.lnk'));
+    SetRunAsAdmin(ExpandConstant('{commonprograms}\AzurNext.lnk'));
   end;
 end;
 
