@@ -81,7 +81,13 @@ fn main() {
                 println!("cargo:rerun-if-changed={}", local_cert_path.display());
                 Some(fs::read(&local_cert_path).expect("read local certificate file"))
             } else {
-                if env::var_os(REQUIRE_MTLS_ENV).is_some() {
+                let require_mtls = env::var(REQUIRE_MTLS_ENV)
+                    .map(|v| {
+                        let s = v.trim().to_ascii_lowercase();
+                        !s.is_empty() && s != "0" && s != "false"
+                    })
+                    .unwrap_or(false);
+                if require_mtls {
                     panic!("ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 is required but not set");
                 }
                 println!(

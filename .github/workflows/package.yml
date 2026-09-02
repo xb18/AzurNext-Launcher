@@ -146,7 +146,6 @@ jobs:
       - name: Build
         env:
           ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 }}
-          REQUIRE_LAUNCHER_MTLS_IDENTITY: ${{ secrets.ALAS_LAUNCHER_MTLS_IDENTITY_PEM_B64 != '' && '1' || '' }}
           LAUNCHER_UPDATE_URL: https://github.com/xb18/AzurNext-Launcher/releases/latest/download/stable.json
         run: cargo build --verbose --release
       - name: Get git
