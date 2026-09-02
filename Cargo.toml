@@ -1,6 +1,6 @@
 [package]
 name = "alas-launcher"
-version = "2.1.11"
+version = "2.1.12"
 description = "AzurNext launcher built with Tauri"
 authors = ["Jianfeng Zhang <swordfeng123@gmail.com>"]
 edition = "2021"
