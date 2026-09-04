@@ -2633,6 +2633,9 @@ fn page_load_injector(_webview: WebviewWindow, _payload: PageLoadPayload<'_>) {
 }
 
 fn initialize_splash(splash: &WebviewWindow, show_window: bool) {
+    if let Err(e) = splash.center() {
+        warn!("Failed to center splash window: {:?}", e);
+    }
     match Url::parse(SPLASH_URL) {
         Ok(url) => {
             if let Err(e) = splash.navigate(url) {
@@ -3982,6 +3985,7 @@ fn create_main_window(app: &tauri::AppHandle, port: u16) -> Result<WebviewWindow
 
     let app_for_navigation = app.clone();
     let main_window = tauri::WebviewWindowBuilder::from_config(app, main_config)?
+        .center()
         .on_navigation(move |url| handle_backend_navigation(app_for_navigation.clone(), port, url))
         .on_page_load(page_load_injector)
         .initialization_script(
@@ -3998,6 +4002,11 @@ fn create_main_window(app: &tauri::AppHandle, port: u16) -> Result<WebviewWindow
         )
         .build()?;
     main_window.set_resizable(true)?;
+
+    // 默认居中显示
+    if let Err(e) = main_window.center() {
+        warn!("Failed to center main window: {:?}", e);
+    }
 
     // Windows/Linux: remove native decorations for the main window as well.
     // Splash is configured as borderless in tauri.conf.json.
