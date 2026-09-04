@@ -2,7 +2,7 @@
 name = "alas-launcher"
 version = "2.1.14"
 description = "AzurNext launcher built with Tauri"
-authors = ["Jianfeng Zhang <swordfeng123@gmail.com>"]
+authors = []
 edition = "2021"
 
 [build-dependencies]
