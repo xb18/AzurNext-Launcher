@@ -2700,6 +2700,15 @@ if (!window.alas_launcher_injected) {
         window.addEventListener('popstate', event => {
             history.pushState(null, document.title, location.href);
         });
+        // Prevent default context menu & print shortcuts
+        window.addEventListener('contextmenu', event => {
+            event.preventDefault();
+        }, { capture: true });
+        window.addEventListener('keydown', event => {
+            if ((event.ctrlKey || event.metaKey) && (event.key === 'p' || event.key === 'P')) {
+                event.preventDefault();
+            }
+        }, { capture: true });
         // Overwrite original saveAs function
         window.saveAs = function (blob, filename) {
             const reader = new FileReader();
@@ -3311,6 +3320,15 @@ fn backend_error_html(port: u16, error_detail: &str) -> String {
     launcherLogButton.addEventListener('click', () => {{
       downloadLog(launcherLogButton, 'download_today_launcher_log', '{launcher_log_label}');
     }});
+
+    window.addEventListener('contextmenu', event => {{
+      event.preventDefault();
+    }}, {{ capture: true }});
+    window.addEventListener('keydown', event => {{
+      if ((event.ctrlKey || event.metaKey) && (event.key === 'p' || event.key === 'P')) {{
+        event.preventDefault();
+      }}
+    }}, {{ capture: true }});
 
     // 每秒尝试自动刷新（重试连接）
     setInterval(() => {{
@@ -4077,6 +4095,18 @@ fn create_main_window(app: &tauri::AppHandle, port: u16) -> Result<WebviewWindow
     let main_window = tauri::WebviewWindowBuilder::from_config(app, main_config)?
         .on_navigation(move |url| handle_backend_navigation(app_for_navigation.clone(), port, url))
         .on_page_load(page_load_injector)
+        .initialization_script(
+            r#"
+            window.addEventListener('contextmenu', function(event) {
+                event.preventDefault();
+            }, { capture: true });
+            window.addEventListener('keydown', function(event) {
+                if ((event.ctrlKey || event.metaKey) && (event.key === 'p' || event.key === 'P')) {
+                    event.preventDefault();
+                }
+            }, { capture: true });
+            "#,
+        )
         .build()?;
     main_window.set_resizable(true)?;
 
