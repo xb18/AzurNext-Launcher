@@ -407,17 +407,49 @@ pub fn is_repo_ready() -> bool {
     dir.join("pyproject.toml").exists() && dir.join("gui.py").exists()
 }
 
+pub fn get_current_repo_commit() -> Option<String> {
+    let repo_dir = alas_repo_dir();
+    let git_exe = if cfg!(windows) {
+        repo_dir.join(".venv/Scripts/git/cmd/git.exe")
+    } else {
+        repo_dir.join(".venv/bin/git")
+    };
+    let exe = if git_exe.exists() {
+        git_exe
+    } else {
+        PathBuf::from("git")
+    };
+    let output = std::process::Command::new(exe)
+        .current_dir(&repo_dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !commit.is_empty() {
+            return Some(commit);
+        }
+    }
+    None
+}
+
 pub fn run_repository_and_dependency_update(
     cancel_requested: Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),
-) -> Result<()> {
+) -> Result<bool> {
+    let before_commit = get_current_repo_commit();
     let bootstrap_uv = bootstrap_uv_path()?;
     info!("Running repository git update...");
     git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
     info!("Running dependency sync with uv...");
     uv_sync_project(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
     info!("Repository and dependency update completed successfully");
-    Ok(())
+    let after_commit = get_current_repo_commit();
+    let repo_updated = match (before_commit, after_commit) {
+        (Some(b), Some(a)) => b != a,
+        _ => false,
+    };
+    Ok(repo_updated)
 }
 
 pub fn setup_alas_repo(

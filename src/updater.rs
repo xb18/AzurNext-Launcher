@@ -61,6 +61,12 @@ pub fn has_pending_launcher_update() -> bool {
     PENDING_LAUNCHER_UPDATE.lock().unwrap().is_some()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdateOutcome {
+    pub launcher_updated: bool,
+    pub repo_updated: bool,
+}
+
 /// 触发更新流程（供手动点击或后台定时器调用）
 pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
     if IS_UPDATING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
@@ -73,7 +79,7 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
     if !is_background {
         show_system_notification(
             &app,
-            &t!("notify.update_title"),
+            &t!("notify.check_update_title"),
             &t!("notify.update_checking"),
         );
     }
@@ -83,13 +89,20 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
         let run_result = perform_update_pipeline(&app_handle, is_background);
         IS_UPDATING.store(false, Ordering::SeqCst);
         match run_result {
-            Ok(has_new_version) => {
-                if has_new_version {
+            Ok(outcome) => {
+                if outcome.launcher_updated {
                     set_update_state(UpdateState::ReadyToRestart);
                     show_system_notification(
                         &app_handle,
                         &t!("notify.update_title"),
                         &t!("notify.update_success_restart"),
+                    );
+                } else if outcome.repo_updated {
+                    set_update_state(UpdateState::Idle);
+                    show_system_notification(
+                        &app_handle,
+                        &t!("notify.update_title"),
+                        &t!("notify.update_success"),
                     );
                 } else {
                     set_update_state(UpdateState::Idle);
@@ -118,7 +131,7 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
     Ok("started".to_string())
 }
 
-fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<bool> {
+fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<UpdateOutcome> {
     info!("Starting update pipeline (is_background={})...", is_background);
 
     // 阶段 1：检查启动器自身更新
@@ -142,12 +155,18 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<bool
     // 阶段 2：检查并拉取 AzurNext 仓库代码与 uv 依赖
     set_update_state(UpdateState::Updating);
     let cancel = Arc::new(AtomicBool::new(false));
-    if let Err(err) = run_repository_and_dependency_update(cancel, |_| {}) {
-        error!("Repository update failed: {err:#}");
-        return Err(err);
-    }
+    let repo_updated = match run_repository_and_dependency_update(cancel, |_| {}) {
+        Ok(updated) => updated,
+        Err(err) => {
+            error!("Repository update failed: {err:#}");
+            return Err(err);
+        }
+    };
 
-    Ok(launcher_updated)
+    Ok(UpdateOutcome {
+        launcher_updated,
+        repo_updated,
+    })
 }
 
 /// 启动后台静默更新调度（当配置为 background 时）

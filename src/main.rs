@@ -4335,12 +4335,26 @@ fn main_window_titlebar_injection_script() -> String {
                                     await invoke('trigger_update');
                                 } catch (e) {
                                     console.error('Failed to trigger update', e);
-                                } finally {
-                                    setTimeout(() => {
+                                }
+                                const pollTimer = setInterval(async () => {
+                                    try {
+                                        const status = await invoke('get_update_status');
+                                        const s = (typeof status === 'string') ? status : (status && status.status);
+                                        if (s !== 'Checking' && s !== 'Updating') {
+                                            clearInterval(pollTimer);
+                                            button.classList.remove('is-spinning');
+                                            if (s === 'ReadyToRestart') {
+                                                button.title = i18n.updateReadyLabel;
+                                            } else {
+                                                button.title = i18n.checkUpdateLabel;
+                                            }
+                                        }
+                                    } catch (_) {
+                                        clearInterval(pollTimer);
                                         button.classList.remove('is-spinning');
                                         button.title = i18n.checkUpdateLabel;
-                                    }, 4000);
-                                }
+                                    }
+                                }, 1000);
                                 break;
                             case 'hide': await invoke('window_hide'); break;
                             case 'minimize': await invoke('window_minimize'); break;
