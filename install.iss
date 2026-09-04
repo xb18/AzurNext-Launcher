@@ -114,7 +114,7 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; \
 Filename: "{app}\alas-launcher.exe"; \
   Description: "{cm:LaunchProgram,AzurNext}"; \
   WorkingDir: "{app}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Code]
 
