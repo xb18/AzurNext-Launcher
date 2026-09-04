@@ -76,11 +76,12 @@ Source: "{#PackageRoot}\alas-launcher.exe";  DestDir: "{app}";          Flags: i
 Source: "{#PackageRoot}\config\*";           DestDir: "{app}\config";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-full
 Source: "{#PackageRoot}\deploy\*";           DestDir: "{app}\deploy";   Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-full
 Source: "{#PackageRoot}\bootstrap\*";        DestDir: "{app}\bootstrap";  Flags: ignoreversion recursesubdirs createallsubdirs; Permissions: users-full
+Source: "{#PackageRoot}\.venv\*";            DestDir: "{app}\.venv";    Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist; Permissions: users-full
 
 ; 运行时安装器（释放到临时目录，安装后自动清理）
 Source: "{#SetupRoot}\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
-Source: "{#SetupRoot}\vcredist_x64.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: IsWin64
-Source: "{#SetupRoot}\vcredist_x86.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
+Source: "{#SetupRoot}\vcredist_x64.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: NeedInstallVCRedistX64
+Source: "{#SetupRoot}\vcredist_x86.exe";               DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: NeedInstallVCRedistX86
 
 [Icons]
 Name: "{autoprograms}\AzurNext"; Filename: "{app}\alas-launcher.exe"; WorkingDir: "{app}"
@@ -90,30 +91,106 @@ Name: "{autodesktop}\AzurNext";  Filename: "{app}\alas-launcher.exe"; WorkingDir
 ;  安装后执行：VC++ / WebView2 / 启动器
 ; --------------------------------------------------------------------------
 [Run]
-; VC++ 2015-2022：幂等操作，已有相同或更高版本时安装器秒退
+; VC++ 2015-2022：若系统已安装则直接跳过
 Filename: "{tmp}\vcredist_x64.exe"; \
   Parameters: "/install /quiet /norestart"; \
   StatusMsg: "正在从塞壬主服务器里偷取最新的运行环境 (x64)..."; \
   Flags: waituntilterminated skipifdoesntexist; \
-  Check: IsWin64
+  Check: NeedInstallVCRedistX64
 
 Filename: "{tmp}\vcredist_x86.exe"; \
   Parameters: "/install /quiet /norestart"; \
   StatusMsg: "正在从塞壬主服务器里偷取最新的运行环境 (x86)..."; \
-  Flags: waituntilterminated skipifdoesntexist
+  Flags: waituntilterminated skipifdoesntexist; \
+  Check: NeedInstallVCRedistX86
 
-; WebView2 Bootstrapper：联网检测+安装，可能耗时较长
+; WebView2 Bootstrapper：若已安装则跳过联网检测+安装
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; \
   Parameters: "/silent /install"; \
   StatusMsg: "正在向明石支付800红宝石以解锁WebView2的下载带宽（可能需要几分钟）..."; \
-  Flags: waituntilterminated skipifdoesntexist
+  Flags: waituntilterminated skipifdoesntexist; \
+  Check: NeedInstallWebView2
 
 Filename: "{app}\alas-launcher.exe"; \
   Description: "{cm:LaunchProgram,AzurNext}"; \
   WorkingDir: "{app}"; \
-  Flags: nowait postinstall skipifsilent runascurrentuser
+  Flags: nowait postinstall skipifsilent
 
 [Code]
+
+// ==========================================================================
+//  前置环境检测：VC++ 2015-2022 & WebView2 Runtime
+//  若系统已存在对应组件，则跳过执行对应的安装包，避免无谓的拉起和联网耗时
+// ==========================================================================
+function NeedInstallVCRedistX64: Boolean;
+var
+  Installed: Cardinal;
+begin
+  Result := True;
+  if not IsWin64 then
+  begin
+    Result := False;
+    Exit;
+  end;
+  if RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64', 'Installed', Installed) then
+    if Installed = 1 then
+      Result := False;
+end;
+
+function NeedInstallVCRedistX86: Boolean;
+var
+  Installed: Cardinal;
+begin
+  Result := True;
+  if IsWin64 then
+  begin
+    if RegQueryDWordValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\X86', 'Installed', Installed) then
+      if Installed = 1 then
+      begin
+        Result := False;
+        Exit;
+      end;
+  end
+  else
+  begin
+    if RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X86', 'Installed', Installed) then
+      if Installed = 1 then
+      begin
+        Result := False;
+        Exit;
+      end;
+  end;
+end;
+
+function NeedInstallWebView2: Boolean;
+var
+  VersionStr: String;
+begin
+  Result := True;
+  // 1. 64位系统下的 WOW6432Node 注册表项
+  if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', VersionStr) then
+    if (VersionStr <> '') and (VersionStr <> '0.0.0.0') then
+    begin
+      Result := False;
+      Exit;
+    end;
+
+  // 2. 原生视图项（32位系统或原生 64位注册项）
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', VersionStr) then
+    if (VersionStr <> '') and (VersionStr <> '0.0.0.0') then
+    begin
+      Result := False;
+      Exit;
+    end;
+
+  // 3. 当前用户级别安装
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', VersionStr) then
+    if (VersionStr <> '') and (VersionStr <> '0.0.0.0') then
+    begin
+      Result := False;
+      Exit;
+    end;
+end;
 
 // ==========================================================================
 //  用户协议 / 隐私声明（内嵌网页）
@@ -523,7 +600,7 @@ end;
 //  ETA 通过独立的 ETALabel 控件显示，不覆盖 Inno 原生状态文本
 // ==========================================================================
 const
-  PERM_TOTAL = 10;
+  PERM_TOTAL = 3;
 
 function FormatETA(Seconds: Integer): String;
 begin
@@ -566,7 +643,7 @@ end;
 
 // ==========================================================================
 //  目录权限修复（ssPostInstall 阶段）
-//  attrib 清只读属性 → icacls 重置/继承/授权
+//  attrib 清只读属性 → icacls 重置/继承/授权（合并批处理，避免重复全盘递归扫描卡死）
 //  仅对 {app} 目录生效，不影响系统目录
 // ==========================================================================
 procedure RunPermissionSteps;
@@ -584,36 +661,18 @@ begin
   WizardForm.ProgressGauge.Position := 0;
   PermStartTick := GetTickCount;
 
+  // 步骤 0：移除目录及文件的只读属性
   RunPermStep(0, '皇家方舟正在试图获取驱逐舰宿舍的最高访问权限...',
     SysDir + '\attrib.exe', '-R "' + AppDir + '\*" /S /D');
 
-  RunPermStep(1, '大凤正在将指挥官的浏览器历史记录悄悄打包...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /setowner *S-1-5-32-544 /T /C');
-
-  RunPermStep(2, '赤城正在把其他后台进程当成『害虫』扔进焚化炉...',
+  // 步骤 1：重置权限继承
+  RunPermStep(1, '赤城正在把其他后台进程当成『害虫』扔进焚化炉...',
     SysDir + '\icacls.exe', '"' + AppDir + '" /reset /T /C');
 
-  RunPermStep(3, '正在给小贝法喂食，以防她看到我们在改C盘然后报警...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /inheritance:e /T /C');
-
-  RunPermStep(4, '13-4的防空炮火太猛了，安装程序正在紧急规避...',
+  // 步骤 2：合并处理：启用继承、清理历史拒绝项，并一次性批量授予所有必要权限（单次扫描整棵树）
+  RunPermStep(2, '光辉正在将爱与和平洒满港区...',
     SysDir + '\icacls.exe',
-    '"' + AppDir + '" /remove:d *S-1-1-0 *S-1-5-11 *S-1-5-32-545 *S-1-15-2-1 *S-1-15-2-2 /T /C');
-
-  RunPermStep(5, '皇家方舟正在申请前往驱逐舰宿舍的通行证...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /grant:r *S-1-1-0:(OI)(CI)F /T /C');
-
-  RunPermStep(6, '大凤正在偷偷配制您电脑的管理员钥匙...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /grant:r *S-1-5-11:(OI)(CI)F /T /C');
-
-  RunPermStep(7, '天狼星不小心弄乱了临时文件，正在慌张地清扫...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /grant:r *S-1-5-32-545:(OI)(CI)F /T /C');
-
-  RunPermStep(8, '拉菲正在睡觉...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /grant:r *S-1-15-2-1:(OI)(CI)F /T /C');
-
-  RunPermStep(9, '光辉正在将爱与和平洒满港区...',
-    SysDir + '\icacls.exe', '"' + AppDir + '" /grant:r *S-1-15-2-2:(OI)(CI)F /T /C');
+    '"' + AppDir + '" /inheritance:e /remove:d *S-1-1-0 *S-1-5-11 *S-1-5-32-545 *S-1-15-2-1 *S-1-15-2-2 /grant:r *S-1-1-0:(OI)(CI)F *S-1-5-11:(OI)(CI)F *S-1-5-32-545:(OI)(CI)F *S-1-15-2-1:(OI)(CI)F *S-1-15-2-2:(OI)(CI)F /T /C');
 
   WizardForm.ProgressGauge.Position := PERM_TOTAL;
 end;
