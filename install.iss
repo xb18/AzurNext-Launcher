@@ -624,17 +624,21 @@ end;
 procedure SetRunAsAdmin(const FileName: String);
 var
   Stream: TFileStream;
-  Flags: Byte;
+  Buffer: AnsiString;
 begin
   if not FileExists(FileName) then Exit;
   try
     Stream := TFileStream.Create(FileName, $0042);
     try
-      Stream.Seek($15, soFromBeginning);
-      Stream.Read(Flags, 1);
-      Flags := Flags or $20;
-      Stream.Seek($15, soFromBeginning);
-      Stream.Write(Flags, 1);
+      if Stream.Size >= 22 then
+      begin
+        Stream.Position := 21;
+        SetLength(Buffer, 1);
+        Stream.ReadBuffer(Buffer, 1);
+        Buffer[1] := Chr(Ord(Buffer[1]) or $20);
+        Stream.Position := 21;
+        Stream.WriteBuffer(Buffer, 1);
+      end;
     finally
       Stream.Free;
     end;
