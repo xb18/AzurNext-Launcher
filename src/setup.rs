@@ -513,6 +513,7 @@ pub fn setup_alas_repo(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn rebuild_venv_and_sync_dependencies(
     mut status_updater: impl FnMut(SplashUpdate),
     cancel_requested: Arc<AtomicBool>,
@@ -550,6 +551,7 @@ pub fn get_deploy_config() -> Option<JsonValue> {
     Some(config)
 }
 
+#[allow(dead_code)]
 pub fn cleanup_runtime_for_rebuild() -> Result<()> {
     let repo_dir = alas_repo_dir();
     let current_exe = std::env::current_exe()?;

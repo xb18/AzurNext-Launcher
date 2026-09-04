@@ -31,13 +31,10 @@ use std::{
 };
 
 use crate::{
-    backend::{is_backend_startup_timeout, ManagedBackend, WebuiLaunchConfig},
+    backend::{ManagedBackend, WebuiLaunchConfig},
     launcher_control::start_launcher_control_stream,
     notify::{start_notify_stream, NotificationClickHandler},
-    setup::{
-        cleanup_runtime_for_rebuild, get_deploy_config, rebuild_venv_and_sync_dependencies,
-        setup_alas_repo, setup_environment, SplashUpdate,
-    },
+    setup::{get_deploy_config, setup_alas_repo, setup_environment, SplashUpdate},
 };
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -177,75 +174,7 @@ fn tray_icon_for_platform() -> Image<'static> {
     })
 }
 
-fn begin_startup_cleanup(
-    app_handle: tauri::AppHandle,
-    allow_exit: Arc<AtomicBool>,
-    setup_cancel_requested: Arc<AtomicBool>,
-    setup_running: Arc<AtomicBool>,
-    startup_cleanup_started: Arc<AtomicBool>,
-) {
-    if startup_cleanup_started
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
-    }
 
-    setup_cancel_requested.store(true, Ordering::SeqCst);
-    if let Some(splash) = app_handle.get_webview_window("splash") {
-        update_splash(
-            &splash,
-            &SplashUpdate::loading(
-                t!("dialog.cleaning_env"),
-                t!("dialog.cleaning_env_detail"),
-                99,
-            )
-            .with_subtitle(t!("dialog.cleaning_wait")),
-        );
-    }
-
-    app_handle
-        .dialog()
-        .message(t!("dialog.cleaning_message"))
-        .title(t!("dialog.cleaning_env"))
-        .show(|_| {});
-
-    thread::spawn(move || {
-        let started_at = Instant::now();
-        while setup_running.load(Ordering::SeqCst) && started_at.elapsed() < Duration::from_secs(30)
-        {
-            thread::sleep(Duration::from_millis(100));
-        }
-
-        if setup_running.load(Ordering::SeqCst) {
-            warn!("Setup thread did not stop before startup cleanup timeout");
-        }
-
-        match cleanup_runtime_for_rebuild() {
-            Ok(()) => {
-                info!("Startup cleanup finished; runtime will be rebuilt on next launch");
-            }
-            Err(e) => {
-                error!("Startup cleanup failed: {:?}", e);
-                if let Some(splash) = app_handle.get_webview_window("splash") {
-                    update_splash(
-                        &splash,
-                        &SplashUpdate::error(
-                            t!("dialog.cleanup_failed"),
-                            t!("dialog.cleanup_failed_detail", error = format!("{e:#}")),
-                            99,
-                        ),
-                    );
-                }
-                startup_cleanup_started.store(false, Ordering::SeqCst);
-                return;
-            }
-        }
-
-        allow_exit.store(true, Ordering::SeqCst);
-        app_handle.exit(0);
-    });
-}
 
 fn time_bomb_config() -> Result<Option<TimeBombConfig>> {
     let Some(section) = cargo_toml_section("package.metadata.alas-launcher.time-bomb") else {
@@ -1923,7 +1852,6 @@ fn main() -> Result<()> {
     let setup_cancel_requested = Arc::new(AtomicBool::new(false));
     let setup_running = Arc::new(AtomicBool::new(false));
     let setup_completed = Arc::new(AtomicBool::new(false));
-    let startup_cleanup_started = Arc::new(AtomicBool::new(false));
     let recreating_main_window = Arc::new(AtomicBool::new(false));
 
     let allow_exit_for_setup = allow_exit.clone();
@@ -2258,50 +2186,7 @@ fn main() -> Result<()> {
                                 crate::setup::get_tip()
                             )),
                         );
-                        let mut backend_recovery_used = false;
-                        let backend_result = loop {
-                            match ManagedBackend::new(&webui_config) {
-                                Ok(backend) => break Ok(backend),
-                                Err(error)
-                                    if !backend_recovery_used
-                                        && is_backend_startup_timeout(&error) =>
-                                {
-                                    backend_recovery_used = true;
-                                    if setup_cancel_requested.load(Ordering::SeqCst) {
-                                        break Err(error);
-                                    }
-
-                                    warn!(
-                                        "Backend startup timed out; rebuilding .venv and retrying once"
-                                    );
-                                    if let Err(recovery_error) = rebuild_venv_and_sync_dependencies(
-                                        &mut status_updater,
-                                        setup_cancel_requested.clone(),
-                                    ) {
-                                        break Err(recovery_error.context(
-                                            "Failed to rebuild .venv after backend startup timeout",
-                                        ));
-                                    }
-
-                                    info!(
-                                        "Retrying gui.py after rebuilding dependencies on http://127.0.0.1:{port}/"
-                                    );
-                                    status_updater(
-                                        SplashUpdate::loading(
-                                            t!("splash.starting"),
-                                            t!("splash.webui_init_slow"),
-                                            97,
-                                        )
-                                        .with_subtitle(format!(
-                                            "{} | Tips:{}",
-                                            t!("splash.starting_backend"),
-                                            crate::setup::get_tip()
-                                        )),
-                                    );
-                                }
-                                Err(error) => break Err(error),
-                            }
-                        };
+                        let backend_result = ManagedBackend::new(&webui_config);
                         let b = match backend_result {
                             Ok(backend) => backend,
                             Err(e) => {
@@ -2369,22 +2254,18 @@ fn main() -> Result<()> {
                     });
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {
-                    if !setup_completed.load(Ordering::SeqCst)
-                        && !startup_cleanup_started.load(Ordering::SeqCst)
-                    {
-                        api.prevent_exit();
-                        begin_startup_cleanup(
-                            app_handle.clone(),
-                            allow_exit.clone(),
-                            setup_cancel_requested.clone(),
-                            setup_running.clone(),
-                            startup_cleanup_started.clone(),
-                        );
-                        return;
-                    }
-
                     let should_allow = allow_exit.load(Ordering::SeqCst);
                     debug!("ExitRequested event: allow_exit={}", should_allow);
+
+                    // 启动未完成且请求退出时，设置取消并直接终止，绝不清理环境
+                    if !setup_completed.load(Ordering::SeqCst) {
+                        setup_cancel_requested.store(true, Ordering::SeqCst);
+                        info!("Exit requested before setup completed, exiting cleanly without environment cleanup");
+                        if let Some(ref mut b) = *backend.lock().unwrap() {
+                            let _ = b.terminate();
+                        }
+                        return;
+                    }
 
                     // Only exit if explicitly allowed (e.g., via tray menu Quit)
                     if !should_allow {
@@ -2417,21 +2298,14 @@ fn main() -> Result<()> {
                 } => {
                     debug!("Window {} close requested", label);
 
-                    if label == "splash" && !setup_completed.load(Ordering::SeqCst) {
+                    if label == "splash" {
                         api.prevent_close();
-                        begin_startup_cleanup(
-                            app_handle.clone(),
-                            allow_exit.clone(),
-                            setup_cancel_requested.clone(),
-                            setup_running.clone(),
-                            startup_cleanup_started.clone(),
-                        );
-                        return;
-                    }
-
-                    if label == "splash" && !allow_exit.load(Ordering::SeqCst) {
-                        api.prevent_close();
+                        setup_cancel_requested.store(true, Ordering::SeqCst);
                         allow_exit.store(true, Ordering::SeqCst);
+                        info!("Splash window close requested, exiting application cleanly without environment cleanup");
+                        if let Some(ref mut b) = *backend.lock().unwrap() {
+                            let _ = b.terminate();
+                        }
                         app_handle.exit(0);
                         return;
                     }

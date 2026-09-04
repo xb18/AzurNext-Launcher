@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
     process::{Command, ExitStatus},
     thread::sleep,
     time::Duration,
@@ -33,8 +33,60 @@ impl std::fmt::Display for BackendStartupTimeout {
 
 impl std::error::Error for BackendStartupTimeout {}
 
+#[allow(dead_code)]
 pub(crate) fn is_backend_startup_timeout(error: &anyhow::Error) -> bool {
     error.downcast_ref::<BackendStartupTimeout>().is_some()
+}
+
+/// 测试指定端口当前在 127.0.0.1 上是否可用
+pub fn is_port_available(port: u16) -> bool {
+    if port == 0 {
+        return false;
+    }
+    match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => {
+            drop(listener);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 生产环境空闲端口选择器：
+/// 若用户显式配置了非 25548 且非 0 的自定义端口且可用，则遵循用户配置；
+/// 否则（默认或未配置），生产环境自动由系统分配一个可用空闲端口（避开开发固定的 25548）。
+pub fn pick_production_free_port(configured_port: Option<u16>) -> u16 {
+    if let Some(port) = configured_port {
+        if port != 0 && port != 25548 && is_port_available(port) {
+            info!("Production using user-configured custom port: {port}");
+            return port;
+        }
+    }
+
+    // 由系统动态分配空闲端口 (port 0)
+    match TcpListener::bind(("127.0.0.1", 0)) {
+        Ok(listener) => {
+            if let Ok(addr) = listener.local_addr() {
+                let dynamic_port = addr.port();
+                drop(listener);
+                info!("Production allocated dynamic free port: {dynamic_port}");
+                return dynamic_port;
+            }
+        }
+        Err(e) => {
+            warn!("Failed to bind ephemeral port: {e}");
+        }
+    }
+
+    // 备选空闲端口探测（从 25550 开始，避开 25548 开发端口）
+    for port in 25550..25650 {
+        if is_port_available(port) {
+            info!("Production found free port: {port}");
+            return port;
+        }
+    }
+
+    25549
 }
 
 #[derive(Clone, Debug)]
@@ -54,16 +106,18 @@ impl WebuiLaunchConfig {
             .and_then(|config| config.get("Deploy"))
             .and_then(|deploy| deploy.get("Webui"));
 
+        let configured_port = webui
+            .and_then(|webui| webui.get("WebuiPort"))
+            .and_then(value_as_u16);
+        let port = pick_production_free_port(configured_port);
+
         Self {
             host: webui
                 .and_then(|webui| webui.get("WebuiHost"))
                 .and_then(value_as_string)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "127.0.0.1".to_owned()),
-            port: webui
-                .and_then(|webui| webui.get("WebuiPort"))
-                .and_then(value_as_u16)
-                .unwrap_or(22267),
+            port,
             password: webui
                 .and_then(|webui| webui.get("Password"))
                 .and_then(value_as_string)
@@ -171,7 +225,7 @@ pub struct ManagedBackend {
 impl ManagedBackend {
     pub fn new(config: &WebuiLaunchConfig) -> Result<Self> {
         std::env::set_var("ALAS_LAUNCHER_PID", format!("{}", std::process::id()));
-        kill_processes_using_port(config.port)?;
+        let _ = kill_processes_using_port(config.port);
 
         let mut command = Command::new(venv_python());
         command.args(config.args());
@@ -378,5 +432,30 @@ mod tests {
 
         assert!(is_backend_startup_timeout(&timeout));
         assert!(!is_backend_startup_timeout(&anyhow!("other startup error")));
+    }
+
+    #[test]
+    fn test_pick_production_free_port_allocates_available_port() {
+        let port = pick_production_free_port(None);
+        assert!(port > 0);
+        assert!(is_port_available(port));
+    }
+
+    #[test]
+    fn test_pick_production_free_port_avoids_development_port() {
+        let port = pick_production_free_port(Some(25548));
+        assert!(port > 0);
+        assert!(is_port_available(port));
+    }
+
+    #[test]
+    fn test_pick_production_free_port_respects_custom_available_port() {
+        // 使用一个确定可用的临时分配端口作为自定义端口
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test port");
+        let free_port = listener.local_addr().expect("local_addr").port();
+        drop(listener);
+
+        let chosen = pick_production_free_port(Some(free_port));
+        assert_eq!(chosen, free_port);
     }
 }
