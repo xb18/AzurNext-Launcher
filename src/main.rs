@@ -535,13 +535,17 @@ fn check_launcher_update_and_restart(mut status_updater: impl FnMut(SplashUpdate
 pub fn check_and_download_launcher_update_payload() -> Result<Option<(String, PathBuf)>> {
     let current_version = env!("CARGO_PKG_VERSION");
     let platform_key = launcher_update_platform_key();
+    info!("Checking launcher update: current_version={current_version}, platform={platform_key}");
     let manifest_client = launcher_update_http_client(Some(Duration::from_secs(10)), false)?;
     let manifest = fetch_launcher_update_manifest(&manifest_client)?;
+    info!("Remote launcher manifest version: {}", manifest.version);
     let update_available = launcher_version_is_newer(current_version, &manifest.version)
         .ok_or_else(|| anyhow!("Invalid launcher manifest version: {}", manifest.version))?;
     if !update_available {
+        info!("Launcher is already latest version (current={current_version}, remote={})", manifest.version);
         return Ok(None);
     }
+    info!("Newer launcher version found: {current_version} -> {}", manifest.version);
     let Some(platform) = manifest.platforms.get(platform_key) else {
         return Err(anyhow!("No launcher update payload for platform {platform_key}"));
     };
@@ -1273,12 +1277,36 @@ fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Resul
 }
 
 #[cfg(windows)]
+fn log_helper(msg: &str, target_path: Option<&Path>) {
+    let now = Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
+    let line = format!("{now} [Update-Helper] {msg}\n");
+
+    let temp_log = std::env::temp_dir().join("azurpilot-launcher-update.log");
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&temp_log) {
+        let _ = f.write_all(line.as_bytes());
+    }
+
+    if let Some(target) = target_path {
+        if let Some(parent) = target.parent() {
+            let app_log_dir = parent.join("log");
+            if app_log_dir.is_dir() {
+                let log_file = app_log_dir.join(today_launcher_log_filename());
+                if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&log_file) {
+                    let _ = f.write_all(line.as_bytes());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
 fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Result<()> {
     let helper_path = std::env::temp_dir().join(format!(
         "azurpilot-launcher-update-helper-{}.exe",
         std::process::id()
     ));
 
+    info!("Preparing launcher update: copying current_exe ({:?}) -> helper ({:?})", current_exe, helper_path);
     fs::copy(current_exe, &helper_path).with_context(|| {
         t!(
             "errors.copy_file_failed",
@@ -1287,6 +1315,7 @@ fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Resul
         )
     })?;
 
+    info!("Spawning update helper {:?} with target {:?} and payload {:?}", helper_path, current_exe, update_path);
     use std::os::windows::process::CommandExt;
     use winapi::um::winbase::CREATE_NO_WINDOW;
     Command::new(&helper_path)
@@ -1303,6 +1332,7 @@ fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Resul
                 error = helper_path.display().to_string()
             )
         })?;
+    info!("Update helper spawned successfully");
     Ok(())
 }
 
@@ -1325,28 +1355,58 @@ fn try_apply_launcher_update_from_args() -> Result<bool> {
     let update_path = args
         .next()
         .ok_or_else(|| anyhow!("missing launcher update payload path"))?;
-    apply_launcher_update_and_restart(PathBuf::from(target_path), PathBuf::from(update_path))?;
-    Ok(true)
+
+    let target = PathBuf::from(target_path);
+    let update = PathBuf::from(update_path);
+    log_helper(&format!("Helper started with PID {}. Target: {:?}, Payload: {:?}", std::process::id(), target, update), Some(&target));
+
+    match apply_launcher_update_and_restart(target.clone(), update) {
+        Ok(()) => {
+            log_helper("Update applied successfully, helper exiting.", Some(&target));
+            Ok(true)
+        }
+        Err(err) => {
+            log_helper(&format!("FATAL: Failed to apply launcher update: {err:#}"), Some(&target));
+            Err(err)
+        }
+    }
 }
 
 #[cfg(windows)]
 fn apply_launcher_update_and_restart(target_path: PathBuf, update_path: PathBuf) -> Result<()> {
     let mut last_error = None;
-    for _ in 0..60 {
+    log_helper("Waiting for parent launcher process to exit...", Some(&target_path));
+    thread::sleep(Duration::from_millis(600));
+
+    for attempt in 1..=60 {
         match move_file_replace(&update_path, &target_path) {
             Ok(()) => {
-                restart_launcher_after_update(&target_path)?;
-                schedule_file_delete_on_reboot(&std::env::current_exe()?);
-                return Ok(());
+                log_helper(&format!("Executable replaced successfully on attempt {attempt}. Spawning new launcher..."), Some(&target_path));
+                match restart_launcher_after_update(&target_path) {
+                    Ok(()) => {
+                        log_helper("New launcher process spawned successfully.", Some(&target_path));
+                        schedule_file_delete_on_reboot(&std::env::current_exe()?);
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        log_helper(&format!("Failed to restart launcher after replacement: {err:#}"), Some(&target_path));
+                        return Err(err);
+                    }
+                }
             }
             Err(err) => {
+                if attempt == 1 || attempt % 5 == 0 {
+                    log_helper(&format!("Attempt {attempt}/60 failed ({err}). Retrying in 1s..."), Some(&target_path));
+                }
                 last_error = Some(err);
                 thread::sleep(Duration::from_secs(1));
             }
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow!("launcher update replacement timed out")))
+    let err = last_error.unwrap_or_else(|| anyhow!("launcher update replacement timed out"));
+    log_helper(&format!("Replacement timed out after 60 seconds: {err:#}"), Some(&target_path));
+    Err(err)
 }
 
 #[cfg(windows)]
@@ -1374,13 +1434,10 @@ fn move_file_replace(from: &Path, to: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn restart_launcher_after_update(target_path: &Path) -> Result<()> {
-    use std::os::windows::process::CommandExt;
-    use winapi::um::winbase::CREATE_NO_WINDOW;
-
+    log_helper(&format!("Spawning updated launcher: {:?}", target_path), Some(target_path));
     Command::new(target_path)
         .env(LAUNCHER_UPDATE_SKIP_ENV, "1")
         .env(LAUNCHER_UPDATE_NO_CONSOLE_ENV, "1")
-        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .with_context(|| {
             t!(
@@ -2002,7 +2059,10 @@ fn main() -> Result<()> {
                                 allow_exit.store(true, Ordering::SeqCst);
                                 if let Some(update_path) = crate::updater::take_pending_launcher_update() {
                                     if let Ok(current_exe) = std::env::current_exe() {
-                                        let _ = replace_launcher_and_restart(&current_exe, &update_path);
+                                        info!("Tray quit triggered with pending update payload: {:?}", update_path);
+                                        if let Err(e) = replace_launcher_and_restart(&current_exe, &update_path) {
+                                            error!("Failed to launch updater helper on quit: {e:#}");
+                                        }
                                     }
                                 }
                                 app.exit(0);
@@ -2389,7 +2449,10 @@ fn main() -> Result<()> {
                                     allow_exit.store(true, Ordering::SeqCst);
                                     if let Some(update_path) = crate::updater::take_pending_launcher_update() {
                                         if let Ok(current_exe) = std::env::current_exe() {
-                                            let _ = replace_launcher_and_restart(&current_exe, &update_path);
+                                            info!("CloseAction::Exit triggered with pending update payload: {:?}", update_path);
+                                            if let Err(e) = replace_launcher_and_restart(&current_exe, &update_path) {
+                                                error!("Failed to launch updater helper on close exit: {e:#}");
+                                            }
                                         }
                                     }
                                     app_handle.exit(0);
@@ -2594,7 +2657,10 @@ fn window_exit_application(
     exit_control.0.store(true, Ordering::SeqCst);
     if let Some(update_path) = crate::updater::take_pending_launcher_update() {
         if let Ok(current_exe) = std::env::current_exe() {
-            let _ = replace_launcher_and_restart(&current_exe, &update_path);
+            info!("window_exit_application triggered with pending update payload: {:?}", update_path);
+            if let Err(e) = replace_launcher_and_restart(&current_exe, &update_path) {
+                error!("Failed to launch updater helper on window_exit_application: {e:#}");
+            }
         }
     }
     app_handle.exit(0);
