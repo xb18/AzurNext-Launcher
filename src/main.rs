@@ -1501,6 +1501,7 @@ mod tests {
             assert!(titlebar_script.contains("if (webviewDraggableRegionsEnabled)"));
             assert!(titlebar_script.contains("min-height:12px"));
             assert!(titlebar_script.contains("alas-close-menu"));
+            assert!(titlebar_script.contains("alas-close-menu-remember"));
             assert!(!titlebar_script.contains("alas-close-optics"));
             assert!(!titlebar_script.contains("alas-island-open"));
             assert!(titlebar_script.contains("__ALAS_OPEN_CLOSE_PROMPT"));
@@ -1898,7 +1899,9 @@ fn main() -> Result<()> {
             trigger_update,
             get_update_status,
             get_update_method,
-            set_update_method
+            set_update_method,
+            get_close_action,
+            set_close_action
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -2373,20 +2376,36 @@ fn main() -> Result<()> {
                         return;
                     }
 
-                    // Windows: show the in-window close chooser instead of a native dialog.
+                    // Windows: show the in-window close chooser instead of a native dialog, or respect configured close action.
                     #[cfg(windows)]
                     {
                         if label == "main" && !allow_exit.load(Ordering::SeqCst) {
                             api.prevent_close();
-                            if let Some(main_window) = app_handle.get_webview_window("main") {
-                                if let Err(err) = main_window.eval(
-                                    "if (typeof window.__ALAS_OPEN_CLOSE_PROMPT !== 'function') { throw new Error('close prompt is unavailable'); } window.__ALAS_OPEN_CLOSE_PROMPT();",
-                                ) {
-                                    warn!("Unable to open close chooser: {err:?}");
+                            match crate::setup::get_close_action() {
+                                crate::setup::CloseAction::Minimize => {
                                     minimize_main_window_to_tray(&app_handle);
                                 }
-                            } else {
-                                minimize_main_window_to_tray(&app_handle);
+                                crate::setup::CloseAction::Exit => {
+                                    allow_exit.store(true, Ordering::SeqCst);
+                                    if let Some(update_path) = crate::updater::take_pending_launcher_update() {
+                                        if let Ok(current_exe) = std::env::current_exe() {
+                                            let _ = replace_launcher_and_restart(&current_exe, &update_path);
+                                        }
+                                    }
+                                    app_handle.exit(0);
+                                }
+                                crate::setup::CloseAction::Ask => {
+                                    if let Some(main_window) = app_handle.get_webview_window("main") {
+                                        if let Err(err) = main_window.eval(
+                                            "if (typeof window.__ALAS_OPEN_CLOSE_PROMPT !== 'function') { throw new Error('close prompt is unavailable'); } window.__ALAS_OPEN_CLOSE_PROMPT();",
+                                        ) {
+                                            warn!("Unable to open close chooser: {err:?}");
+                                            minimize_main_window_to_tray(&app_handle);
+                                        }
+                                    } else {
+                                        minimize_main_window_to_tray(&app_handle);
+                                    }
+                                }
                             }
                             return;
                         }
@@ -2609,6 +2628,25 @@ fn set_update_method(method: String) -> std::result::Result<(), String> {
         _ => crate::setup::UpdateMethod::Manual,
     };
     crate::setup::set_update_method(m).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn get_close_action() -> String {
+    match crate::setup::get_close_action() {
+        crate::setup::CloseAction::Ask => "ask".to_string(),
+        crate::setup::CloseAction::Minimize => "minimize".to_string(),
+        crate::setup::CloseAction::Exit => "exit".to_string(),
+    }
+}
+
+#[tauri::command]
+fn set_close_action(action: String) -> std::result::Result<(), String> {
+    let a = match action.trim().to_ascii_lowercase().as_str() {
+        "minimize" => crate::setup::CloseAction::Minimize,
+        "exit" => crate::setup::CloseAction::Exit,
+        _ => crate::setup::CloseAction::Ask,
+    };
+    crate::setup::set_close_action(a).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -4178,6 +4216,7 @@ fn main_window_titlebar_injection_script() -> String {
             "closePrompt": t!("dialog.confirm_exit"),
             "exitAction": t!("dialog.exit"),
             "minimizeToTrayAction": t!("dialog.minimize_to_tray"),
+            "rememberChoice": t!("dialog.remember_choice"),
             "checkUpdateLabel": t!("titlebar.check_update"),
             "updatingLabel": t!("titlebar.updating"),
             "updateReadyLabel": t!("titlebar.update_ready"),
@@ -4206,7 +4245,7 @@ fn main_window_titlebar_injection_script() -> String {
                 const style = document.createElement('style');
                 style.id = 'alas-launcher-titlebar-style';
                 style.textContent = ':root{--alas-titlebar-height:44px}#alas-launcher-titlebar{position:fixed;top:0;left:0;right:0;height:var(--alas-titlebar-height);z-index:2147483647;user-select:none;pointer-events:none;background:transparent}#alas-launcher-titlebar *{box-sizing:border-box}.alas-titlebar-drag-zone{position:absolute;inset:0 144px 0 0;height:100%;pointer-events:auto;background:transparent;touch-action:none;app-region:drag;-webkit-app-region:drag}.header-icon,.header-icon *{app-region:no-drag;-webkit-app-region:no-drag}.header-icon{display:flex;align-items:center;gap:8px;padding:0 12px;position:absolute;top:0;right:0;height:100%;pointer-events:auto}.icon{width:12px;height:12px;min-width:12px;min-height:12px;margin:0;padding:0;line-height:1;border-radius:50%;border:none;cursor:pointer;flex:0 0 auto;position:relative;transition:filter 120ms ease;display:inline-flex;align-items:center;justify-content:center}.icon:active{filter:brightness(0.85)}.icon-update{background:rgba(255,255,255,.18);box-shadow:0 0 0 .5px rgba(255,255,255,.25)}.icon-update svg{width:8px;height:8px;fill:#fff;stroke:none;opacity:.85;transition:transform 300ms ease}.icon-update.is-spinning svg{animation:alas-spin 1s linear infinite}@keyframes alas-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.icon-hide{background:#3b82f6;box-shadow:0 0 0 .5px #2563eb}.icon-close{background:#ff5f57;box-shadow:0 0 0 .5px #e0443e}.icon-minimize{background:#febc2e;box-shadow:0 0 0 .5px #d4a017}.icon-maximize{background:#28c840;box-shadow:0 0 0 .5px #14ae35}.icon svg{width:7px;height:7px;stroke:rgba(0,0,0,.72);fill:none;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity 150ms ease}.header-icon:hover .icon svg{opacity:1}@media(max-width:680px){.alas-titlebar-drag-zone{inset-right:112px}}';
-                style.textContent += '#alas-close-menu{position:fixed;top:8px;right:8px;z-index:2147483647;width:244px;padding:11px;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:rgba(22,25,31,.92);box-shadow:0 18px 46px rgba(0,0,0,.3);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);color:#fff;opacity:0;pointer-events:none;transform:translateY(-14px) scale(.72);transform-origin:calc(100% - 16px) 18px;transition:opacity 160ms ease,transform 220ms cubic-bezier(.2,.9,.25,1);app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu.is-open{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}#alas-close-menu *{box-sizing:border-box;app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu-title{margin:0 0 10px;font:500 12px/1.45 "MiSans",sans-serif;color:rgba(255,255,255,.78)}#alas-close-menu-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}#alas-close-menu button{display:flex;align-items:center;justify-content:center;min-width:0;min-height:34px;margin:0;padding:0 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.1);color:#fff;font:600 12px/1 "MiSans",sans-serif;cursor:pointer;transition:background 120ms ease,transform 120ms ease}#alas-close-menu button:hover{transform:translateY(-1px);background:rgba(255,255,255,.18)}#alas-close-menu button:active{transform:translateY(0)}#alas-close-menu button:disabled{opacity:.55;cursor:default;transform:none}#alas-close-menu .alas-close-confirm{border-color:rgba(255,113,106,.38);background:rgba(202,56,52,.82)}#alas-close-menu .alas-close-confirm:hover{background:rgba(225,68,63,.94)}';
+                style.textContent += '#alas-close-menu{position:fixed;top:8px;right:8px;z-index:2147483647;width:244px;padding:11px;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:rgba(22,25,31,.92);box-shadow:0 18px 46px rgba(0,0,0,.3);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);color:#fff;opacity:0;pointer-events:none;transform:translateY(-14px) scale(.72);transform-origin:calc(100% - 16px) 18px;transition:opacity 160ms ease,transform 220ms cubic-bezier(.2,.9,.25,1);app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu.is-open{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}#alas-close-menu *{box-sizing:border-box;app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu-title{margin:0 0 10px;font:500 12px/1.45 "MiSans",sans-serif;color:rgba(255,255,255,.78)}#alas-close-menu-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}#alas-close-menu button{display:flex;align-items:center;justify-content:center;min-width:0;min-height:34px;margin:0;padding:0 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.1);color:#fff;font:600 12px/1 "MiSans",sans-serif;cursor:pointer;transition:background 120ms ease,transform 120ms ease}#alas-close-menu button:hover{transform:translateY(-1px);background:rgba(255,255,255,.18)}#alas-close-menu button:active{transform:translateY(0)}#alas-close-menu button:disabled{opacity:.55;cursor:default;transform:none}#alas-close-menu .alas-close-confirm{border-color:rgba(255,113,106,.38);background:rgba(202,56,52,.82)}#alas-close-menu .alas-close-confirm:hover{background:rgba(225,68,63,.94)}#alas-close-menu-remember{display:flex;align-items:center;gap:6px;margin-top:10px;font:400 11px/1.4 "MiSans",sans-serif;color:rgba(255,255,255,.72);cursor:pointer;user-select:none}#alas-close-menu-remember input[type="checkbox"]{accent-color:#3b82f6;cursor:pointer;width:13px;height:13px;margin:0}';
                 document.head.appendChild(style);
             }
             const titlebar = document.createElement('div');
@@ -4222,10 +4261,11 @@ fn main_window_titlebar_injection_script() -> String {
                 closeMenu.id = 'alas-close-menu';
                 closeMenu.setAttribute('role', 'dialog');
                 closeMenu.setAttribute('aria-modal', 'false');
-                closeMenu.innerHTML = '<p id="alas-close-menu-title"></p><div id="alas-close-menu-actions"><button type="button" data-close-action="minimize"></button><button type="button" class="alas-close-confirm" data-close-action="exit"></button></div>';
+                closeMenu.innerHTML = '<p id="alas-close-menu-title"></p><div id="alas-close-menu-actions"><button type="button" data-close-action="minimize"></button><button type="button" class="alas-close-confirm" data-close-action="exit"></button></div><label id="alas-close-menu-remember"><input type="checkbox" id="alas-close-menu-remember-check" checked><span></span></label>';
                 closeMenu.querySelector('#alas-close-menu-title').textContent = i18n.closePrompt;
                 closeMenu.querySelector('[data-close-action="minimize"]').textContent = i18n.minimizeToTrayAction;
                 closeMenu.querySelector('[data-close-action="exit"]').textContent = i18n.exitAction;
+                closeMenu.querySelector('#alas-close-menu-remember span').textContent = i18n.rememberChoice;
                 closeMenu.addEventListener('pointerdown', event => event.stopPropagation());
                 document.body.appendChild(closeMenu);
             }
@@ -4242,11 +4282,21 @@ fn main_window_titlebar_injection_script() -> String {
             };
             window.__ALAS_OPEN_CLOSE_PROMPT = showClosePrompt;
             closeMenu.querySelector('[data-close-action="minimize"]').addEventListener('click', async () => {
+                const remember = closeMenu.querySelector('#alas-close-menu-remember-check')?.checked;
                 setCloseMenuOpen(false);
+                if (remember) {
+                    try { await invoke('set_close_action', { action: 'minimize' }); }
+                    catch (e) { console.error('Failed to set close action', e); }
+                }
                 try { await invoke('window_hide'); }
                 catch (error) { console.error('Failed to minimize window to tray', error); }
             });
             closeMenu.querySelector('[data-close-action="exit"]').addEventListener('click', async () => {
+                const remember = closeMenu.querySelector('#alas-close-menu-remember-check')?.checked;
+                if (remember) {
+                    try { await invoke('set_close_action', { action: 'exit' }); }
+                    catch (e) { console.error('Failed to set close action', e); }
+                }
                 closeMenu.querySelectorAll('button').forEach(button => { button.disabled = true; });
                 try { await invoke('window_exit_application'); }
                 catch (error) {
@@ -4295,7 +4345,25 @@ fn main_window_titlebar_injection_script() -> String {
                             case 'hide': await invoke('window_hide'); break;
                             case 'minimize': await invoke('window_minimize'); break;
                             case 'maximize': await invoke('window_toggle_maximize'); await syncMaximizeState(); break;
-                            case 'close': showClosePrompt(); break;
+                            case 'close':
+                                if (!closePromptEnabled) {
+                                    invoke('window_close').catch(error => console.error('Failed to close window', error));
+                                    break;
+                                }
+                                try {
+                                    const action = await invoke('get_close_action');
+                                    if (action === 'minimize') {
+                                        await invoke('window_hide');
+                                        break;
+                                    } else if (action === 'exit') {
+                                        await invoke('window_exit_application');
+                                        break;
+                                    }
+                                } catch (e) {
+                                    console.error('Failed to get close action', e);
+                                }
+                                showClosePrompt();
+                                break;
                         }
                     } catch (error) {
                         console.error('Failed to handle ' + button.dataset.action + ' window action', error);

@@ -99,6 +99,7 @@ dialog:
   confirm_exit: "Are you sure you want to leave? You can exit or let it run silently in the background."
   exit: "Exit"
   minimize_to_tray: "Minimize to tray"
+  remember_choice: "Remember my choice, do not ask again"
   starting: "Starting"
   startup_failed: "Startup failed"
   repo_setup_failed: "Failed to prepare the environment. You can download the launcher log below for details.\n\n%{error}"

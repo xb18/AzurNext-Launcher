@@ -99,6 +99,7 @@ dialog:
   confirm_exit: "確認要離開嗎？您可以選擇退出，或者讓它在背景默默執行"
   exit: "退出"
   minimize_to_tray: "最小化到系統匣"
+  remember_choice: "記住我的選擇，下次不再詢問"
   starting: "正在啟動"
   startup_failed: "啟動失敗"
   repo_setup_failed: "無法準備環境。您可以下載下方的啟動器日誌以查看詳細錯誤。\n\n%{error}"

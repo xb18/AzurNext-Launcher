@@ -99,6 +99,7 @@ dialog:
   confirm_exit: "确认要离开吗？您可以选择退出，或者让它在后台默默运行"
   exit: "退出"
   minimize_to_tray: "最小化到托盘"
+  remember_choice: "记住我的选择，下次不再询问"
   starting: "正在启动"
   startup_failed: "启动失败"
   repo_setup_failed: "无法准备环境。您可以下载下方的启动器日志以查看详细错误。\n\n%{error}"

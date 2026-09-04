@@ -375,6 +375,29 @@ pub fn get_update_method() -> UpdateMethod {
         .unwrap_or(UpdateMethod::Manual)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloseAction {
+    Ask,
+    Minimize,
+    Exit,
+}
+
+pub fn get_close_action() -> CloseAction {
+    get_deploy_config()
+        .as_ref()
+        .and_then(|c| c.get("Deploy"))
+        .and_then(|d| d.get("Misc"))
+        .and_then(|m| m.get("CloseAction"))
+        .and_then(|v| v.as_str())
+        .map(|s| match s.trim().to_ascii_lowercase().as_str() {
+            "minimize" => CloseAction::Minimize,
+            "exit" => CloseAction::Exit,
+            _ => CloseAction::Ask,
+        })
+        .unwrap_or(CloseAction::Ask)
+}
+
 pub fn is_runtime_ready() -> bool {
     venv_python().exists()
 }
@@ -1370,6 +1393,56 @@ pub fn set_update_method(method: UpdateMethod) -> Result<()> {
     }
     fs::write(path, output)?;
     info!("UpdateMethod successfully set to {method_str} in {path}");
+    Ok(())
+}
+
+pub fn set_close_action(action: CloseAction) -> Result<()> {
+    let path = "./config/deploy.yaml";
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let action_str = match action {
+        CloseAction::Ask => "ask",
+        CloseAction::Minimize => "minimize",
+        CloseAction::Exit => "exit",
+    };
+    if content.is_empty() {
+        return Ok(());
+    }
+    let mut output = String::with_capacity(content.len());
+    let mut found = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let indent_len = line.len() - trimmed.len();
+        let indent = &line[..indent_len];
+        if trimmed.starts_with("CloseAction:") {
+            output.push_str(indent);
+            output.push_str(&format!("CloseAction: {action_str}"));
+            found = true;
+        } else {
+            output.push_str(line);
+        }
+        output.push('\n');
+    }
+    if !found {
+        let mut misc_inserted = false;
+        let mut new_output = String::with_capacity(output.len() + 32);
+        for line in output.lines() {
+            new_output.push_str(line);
+            new_output.push('\n');
+            let trimmed = line.trim_start();
+            if !misc_inserted && trimmed.starts_with("Misc:") {
+                let indent_len = line.len() - trimmed.len();
+                let sub_indent = " ".repeat(indent_len + 2);
+                new_output.push_str(&format!("{sub_indent}CloseAction: {action_str}\n"));
+                misc_inserted = true;
+            }
+        }
+        if !misc_inserted {
+            new_output.push_str(&format!("  Misc:\n    CloseAction: {action_str}\n"));
+        }
+        output = new_output;
+    }
+    fs::write(path, output)?;
+    info!("CloseAction successfully set to {action_str} in {path}");
     Ok(())
 }
 
@@ -2619,5 +2692,12 @@ mod tests {
         assert_eq!(serde_json::from_str::<UpdateMethod>("\"manual\"").unwrap(), UpdateMethod::Manual);
         assert_eq!(serde_json::from_str::<UpdateMethod>("\"background\"").unwrap(), UpdateMethod::Background);
         assert_eq!(serde_json::from_str::<UpdateMethod>("\"startup\"").unwrap(), UpdateMethod::Startup);
+    }
+
+    #[test]
+    fn test_close_action_serde_and_default() {
+        assert_eq!(serde_json::from_str::<CloseAction>("\"ask\"").unwrap(), CloseAction::Ask);
+        assert_eq!(serde_json::from_str::<CloseAction>("\"minimize\"").unwrap(), CloseAction::Minimize);
+        assert_eq!(serde_json::from_str::<CloseAction>("\"exit\"").unwrap(), CloseAction::Exit);
     }
 }

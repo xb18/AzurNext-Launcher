@@ -99,6 +99,7 @@ dialog:
   confirm_exit: "終了しますか？終了するか、バックグラウンドで実行し続けるか選択できます"
   exit: "終了"
   minimize_to_tray: "トレイに最小化"
+  remember_choice: "選択を記憶し、次回から確認しない"
   starting: "起動中"
   startup_failed: "起動失敗"
   repo_setup_failed: "環境を準備できませんでした。下記からランチャーログをダウンロードして詳細なエラーを確認できます。\n\n%{error}"

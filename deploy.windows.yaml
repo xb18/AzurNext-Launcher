@@ -150,6 +150,11 @@ Deploy:
     # 启用 Discord 富状态展示
     # Enable discord rich presence
     DiscordRichPresence: false
+    # 窗口关闭按钮行为 / Window close button action
+    # [ask] 每次询问（默认）/ Ask every time (Default)
+    # [minimize] 最小化到托盘 / Minimize to tray
+    # [exit] 退出程序 / Exit application
+    CloseAction: ask
 
   RemoteAccess:
     # 启用远程访问（使用 https://github.com/wang0618/localshare 提供的 SSH 反向隧道服务）
