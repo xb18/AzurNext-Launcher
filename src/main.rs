@@ -54,7 +54,7 @@ use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    webview::{PageLoadEvent, PageLoadPayload},
+    webview::PageLoadPayload,
     Manager, State, Url, WebviewWindow,
 };
 use tauri_plugin_dialog::DialogExt;
@@ -1486,29 +1486,6 @@ mod tests {
 
         #[cfg(windows)]
         assert!(splash_html.contains("const webviewDraggableRegionsEnabled = true;"));
-
-        #[cfg(not(target_os = "macos"))]
-        let titlebar_script = main_window_titlebar_injection_script();
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            assert!(titlebar_script.contains("touch-action:none"));
-            assert!(titlebar_script.contains("addEventListener('pointerdown'"));
-            assert!(titlebar_script.contains("-webkit-app-region:drag"));
-            assert!(titlebar_script.contains("-webkit-app-region:no-drag"));
-            assert!(titlebar_script.contains("webviewDraggableRegionsEnabled"));
-            assert!(titlebar_script.contains("if (webviewDraggableRegionsEnabled)"));
-            assert!(titlebar_script.contains("min-height:12px"));
-            assert!(titlebar_script.contains("alas-close-menu"));
-            assert!(titlebar_script.contains("alas-close-menu-remember"));
-            assert!(titlebar_script.contains("alas-checkbox-box"));
-            assert!(!titlebar_script.contains("alas-close-optics"));
-            assert!(!titlebar_script.contains("alas-island-open"));
-            assert!(titlebar_script.contains("__ALAS_OPEN_CLOSE_PROMPT"));
-            assert!(titlebar_script.contains("window_exit_application"));
-            #[cfg(windows)]
-            assert!(titlebar_script.contains("const webviewDraggableRegionsEnabled = true;"));
-        }
     }
 
     #[test]
@@ -2651,57 +2628,8 @@ async fn retry_backend_connection(
     Ok(true)
 }
 
-fn page_load_injector(webview: WebviewWindow, payload: PageLoadPayload<'_>) {
-    if payload.event() == PageLoadEvent::Finished {
-        info!(
-            "Injecting saveFile function to loaded page: {}",
-            payload.url()
-        );
-        let injected_js = r#"
-if (!window.alas_launcher_injected) {
-    window.alas_launcher_injected = true;
-    (function () {
-        // Prevent going back
-        history.pushState(null, document.title, location.href);
-        window.addEventListener('popstate', event => {
-            history.pushState(null, document.title, location.href);
-        });
-        // Prevent default context menu & print shortcuts
-        window.addEventListener('contextmenu', event => {
-            event.preventDefault();
-        }, { capture: true });
-        window.addEventListener('keydown', event => {
-            if ((event.ctrlKey || event.metaKey) && (event.key === 'p' || event.key === 'P')) {
-                event.preventDefault();
-            }
-        }, { capture: true });
-        // Overwrite original saveAs function
-        window.saveAs = function (blob, filename) {
-            const reader = new FileReader();
-            reader.onload = async () => {
-                const data = reader.result.split(',')[1];
-                console.log(data);
-                const tauriInvoke =
-                    (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)
-                    || (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke);
-                if (typeof tauriInvoke === 'function') {
-                    tauriInvoke('save_as', { filename, data });
-                }
-            };
-            reader.readAsDataURL(blob);
-        };
-__ALAS_TITLEBAR_SCRIPT__
-    })();
-}
-"#
-        .replace(
-            "__ALAS_TITLEBAR_SCRIPT__",
-            &main_window_titlebar_injection_script(),
-        );
-        if let Err(e) = webview.eval(&injected_js) {
-            error!("Failed to inject JS to webview: {:?}", e);
-        }
-    }
+fn page_load_injector(_webview: WebviewWindow, _payload: PageLoadPayload<'_>) {
+    // 桌面交互与能力已由 WebUI 独立加载与维护，壳端不进行任何脚本注入
 }
 
 fn initialize_splash(splash: &WebviewWindow, show_window: bool) {
@@ -2904,7 +2832,6 @@ fn backend_error_html(port: u16, error_detail: &str) -> String {
     let error_detail_json = to_string(error_detail).unwrap();
     let mi_sans_font_b64 = BASE64_STANDARD.encode(MI_SANS_FONT);
     let splash_video_b64 = BASE64_STANDARD.encode(SPLASH_BG_VIDEO);
-    let titlebar_script = main_window_titlebar_injection_script();
     let i18n = serde_json::json!({
         "title": t!("error_page.title"),
         "heading": t!("error_page.heading"),
@@ -3226,10 +3153,6 @@ fn backend_error_html(port: u16, error_detail: &str) -> String {
     </div>
   </main>
   <script>
-    (function () {{
-{titlebar_script}
-    }})();
-
     const i18n = {i18n_json};
     const backendUrl = {backend_url_json};
     const errorDetail = {error_detail_json};
@@ -4187,253 +4110,5 @@ fn toggle_main_window_visibility(
         }
     } else {
         restore_main_window_from_tray(app, port, recreating_main_window);
-    }
-}
-
-fn main_window_titlebar_injection_script() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        String::new()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let i18n = serde_json::json!({
-            "hideLabel": t!("titlebar.minimize_to_tray"),
-            "minimizeLabel": t!("titlebar.minimize_window"),
-            "minimizeTitle": t!("titlebar.minimize"),
-            "maximizeLabel": t!("titlebar.maximize_restore_window"),
-            "maximizeTitle": t!("titlebar.maximize"),
-            "closeLabel": t!("titlebar.close_window"),
-            "closeTitle": t!("titlebar.close"),
-            "restoreTitle": t!("titlebar.restore"),
-            "maximizeActionTitle": t!("titlebar.maximize_action"),
-            "restoreLabel": t!("titlebar.restore_window"),
-            "maximizeLabelText": t!("titlebar.maximize_window"),
-            "closePrompt": t!("dialog.confirm_exit"),
-            "exitAction": t!("dialog.exit"),
-            "minimizeToTrayAction": t!("dialog.minimize_to_tray"),
-            "rememberChoice": t!("dialog.remember_choice"),
-            "checkUpdateLabel": t!("titlebar.check_update"),
-            "updatingLabel": t!("titlebar.updating"),
-            "updateReadyLabel": t!("titlebar.update_ready"),
-        });
-        let i18n_json = serde_json::to_string(&i18n).unwrap();
-        let mut s = String::with_capacity(8192);
-        s.push_str("const i18n = ");
-        s.push_str(&i18n_json);
-        s.push_str(if cfg!(windows) {
-            ";const webviewDraggableRegionsEnabled = true;const closePromptEnabled = true;"
-        } else {
-            ";const webviewDraggableRegionsEnabled = false;const closePromptEnabled = false;"
-        });
-        s.push_str(r#";
-        const invoke =
-            (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)
-            || (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke);
-        if (typeof invoke !== 'function') {
-            return;
-        }
-
-        window.alasDesktop = window.alasDesktop || {
-            isAvailable: true,
-            minimize: () => invoke('window_minimize'),
-            toggleMaximize: () => invoke('window_toggle_maximize'),
-            isMaximized: () => invoke('window_is_maximized'),
-            minimizeToTray: () => invoke('window_hide'),
-            close: () => invoke('window_close'),
-            exit: () => invoke('window_exit_application'),
-            startDragging: () => invoke('window_start_dragging'),
-            triggerUpdate: () => invoke('trigger_update'),
-            getUpdateStatus: () => invoke('get_update_status'),
-            getUpdateMethod: () => invoke('get_update_method'),
-            setUpdateMethod: (method) => invoke('set_update_method', { method }),
-            getCloseAction: () => invoke('get_close_action'),
-            setCloseAction: (action) => invoke('set_close_action', { action }),
-            downloadGuiLog: () => invoke('download_today_gui_log'),
-            downloadLauncherLog: () => invoke('download_today_launcher_log'),
-            saveAs: (filename, data) => invoke('save_as', { filename, data }),
-            getAutostart: () => invoke('get_autostart_status'),
-            setAutostart: (enabled) => invoke('set_autostart_status', { enabled }),
-        };
-
-        if (window.alasDesktopMounted || document.querySelector('.alas-desktop-controls')) {
-            return;
-        }
-
-        const ensureTitlebar = () => {
-            if (window.alasDesktopMounted || document.querySelector('.alas-desktop-controls')) {
-                return;
-            }
-            if (!document.body || document.getElementById('alas-launcher-titlebar')) {
-                return;
-            }
-            if (!document.getElementById('alas-launcher-titlebar-style')) {
-                const style = document.createElement('style');
-                style.id = 'alas-launcher-titlebar-style';
-                style.textContent = ':root{--alas-titlebar-height:44px}#alas-launcher-titlebar{position:fixed;top:0;left:0;right:0;height:var(--alas-titlebar-height);z-index:2147483647;user-select:none;pointer-events:none;background:transparent}#alas-launcher-titlebar *{box-sizing:border-box}.alas-titlebar-drag-zone{position:absolute;inset:0 144px 0 0;height:100%;pointer-events:auto;background:transparent;touch-action:none;app-region:drag;-webkit-app-region:drag}.header-icon,.header-icon *{app-region:no-drag;-webkit-app-region:no-drag}.header-icon{display:flex;align-items:center;gap:8px;padding:0 12px;position:absolute;top:0;right:0;height:100%;pointer-events:auto}.icon{width:12px;height:12px;min-width:12px;min-height:12px;margin:0;padding:0;line-height:1;border-radius:50%;border:none;cursor:pointer;flex:0 0 auto;position:relative;transition:filter 120ms ease;display:inline-flex;align-items:center;justify-content:center}.icon:active{filter:brightness(0.85)}.icon-update{background:rgba(255,255,255,.18);box-shadow:0 0 0 .5px rgba(255,255,255,.25)}.icon-update svg{width:8px;height:8px;fill:#fff;stroke:none;opacity:.85;transition:transform 300ms ease}.icon-update.is-spinning svg{animation:alas-spin 1s linear infinite}@keyframes alas-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.icon-hide{background:#3b82f6;box-shadow:0 0 0 .5px #2563eb}.icon-close{background:#ff5f57;box-shadow:0 0 0 .5px #e0443e}.icon-minimize{background:#febc2e;box-shadow:0 0 0 .5px #d4a017}.icon-maximize{background:#28c840;box-shadow:0 0 0 .5px #14ae35}.icon svg{width:7px;height:7px;stroke:rgba(0,0,0,.72);fill:none;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round;opacity:0;transition:opacity 150ms ease}.header-icon:hover .icon svg{opacity:1}@media(max-width:680px){.alas-titlebar-drag-zone{inset-right:112px}}';
-                style.textContent += '#alas-close-menu{position:fixed;top:8px;right:8px;z-index:2147483647;width:244px;padding:11px;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:rgba(22,25,31,.92);box-shadow:0 18px 46px rgba(0,0,0,.3);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);color:#fff;opacity:0;pointer-events:none;transform:translateY(-14px) scale(.72);transform-origin:calc(100% - 16px) 18px;transition:opacity 160ms ease,transform 220ms cubic-bezier(.2,.9,.25,1);app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu.is-open{opacity:1;pointer-events:auto;transform:translateY(0) scale(1)}#alas-close-menu *{box-sizing:border-box;app-region:no-drag;-webkit-app-region:no-drag}#alas-close-menu-title{margin:0 0 10px;font:500 12px/1.45 "MiSans",sans-serif;color:rgba(255,255,255,.78)}#alas-close-menu-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}#alas-close-menu button{display:flex;align-items:center;justify-content:center;min-width:0;min-height:34px;margin:0;padding:0 10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.1);color:#fff;font:600 12px/1 "MiSans",sans-serif;cursor:pointer;transition:background 120ms ease,transform 120ms ease}#alas-close-menu button:hover{transform:translateY(-1px);background:rgba(255,255,255,.18)}#alas-close-menu button:active{transform:translateY(0)}#alas-close-menu button:disabled{opacity:.55;cursor:default;transform:none}#alas-close-menu .alas-close-confirm{border-color:rgba(255,113,106,.38);background:rgba(202,56,52,.82)}#alas-close-menu .alas-close-confirm:hover{background:rgba(225,68,63,.94)}#alas-close-menu-remember{display:flex;align-items:center;gap:7px;margin-top:10px;font:400 11px/1.4 "MiSans",sans-serif;color:rgba(255,255,255,.72);cursor:pointer;user-select:none;transition:color 120ms ease}#alas-close-menu-remember:hover{color:rgba(255,255,255,.92)}#alas-close-menu-remember input[type="checkbox"]{position:absolute!important;opacity:0!important;width:0!important;height:0!important;min-width:0!important;min-height:0!important;max-width:0!important;max-height:0!important;margin:0!important;padding:0!important;border:none!important;background:none!important;pointer-events:none!important;transform:none!important;-webkit-appearance:none!important;appearance:none!important}#alas-close-menu-remember input[type="checkbox"]::before,#alas-close-menu-remember input[type="checkbox"]::after{display:none!important;content:none!important;width:0!important;height:0!important;border:none!important;transform:none!important}.alas-checkbox-box{width:14px;height:14px;min-width:14px;min-height:14px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.28);border-radius:4px;background:rgba(255,255,255,.08);flex-shrink:0;transition:background 140ms ease,border-color 140ms ease;box-sizing:border-box}#alas-close-menu-remember:hover .alas-checkbox-box{border-color:rgba(255,255,255,.45);background:rgba(255,255,255,.14)}#alas-close-menu-remember input[type="checkbox"]:checked + .alas-checkbox-box{background:#3b82f6;border-color:#3b82f6}#alas-close-menu-remember input[type="checkbox"]:focus-visible + .alas-checkbox-box{box-shadow:0 0 0 2px rgba(59,130,246,.5)}.alas-checkbox-box svg{width:9px;height:9px;display:block;transform:scale(0);opacity:0;transition:transform 120ms cubic-bezier(.2,.9,.25,1),opacity 120ms ease}.alas-checkbox-box svg path{stroke:#fff!important;fill:none!important;stroke-width:1.8!important;stroke-linecap:round!important;stroke-linejoin:round!important}#alas-close-menu-remember input[type="checkbox"]:checked + .alas-checkbox-box svg{transform:scale(1);opacity:1}.alas-close-menu-remember-text{line-height:1.3}';
-                document.head.appendChild(style);
-            }
-            const titlebar = document.createElement('div');
-            titlebar.id = 'alas-launcher-titlebar';
-            titlebar.innerHTML = '<div class="alas-titlebar-drag-zone" aria-hidden="true"></div><div class="header-icon"><button type="button" class="icon icon-update" data-action="update" aria-label="'+i18n.checkUpdateLabel+'" title="'+i18n.checkUpdateLabel+'"><svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg></button><button type="button" class="icon icon-hide" data-action="hide" aria-label="'+i18n.hideLabel+'" title="'+i18n.hideLabel+'"><svg viewBox="0 0 6 6"><rect x="1" y="1" width="4" height="4" rx="1"/><path d="M2 3h2"/></svg></button><button type="button" class="icon icon-minimize" data-action="minimize" aria-label="'+i18n.minimizeLabel+'" title="'+i18n.minimizeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="3" x2="5" y2="3"/></svg></button><button type="button" class="icon icon-maximize" data-action="maximize" aria-label="'+i18n.maximizeLabel+'" title="'+i18n.maximizeTitle+'"><svg viewBox="0 0 6 6" class="svg-restore" style="display:none"><polyline points="1,3 1,1 3,1"/><polyline points="3,5 5,5 5,3"/></svg><svg viewBox="0 0 6 6" class="svg-maximize"><polyline points="1,2.5 1,1 2.5,1"/><polyline points="3.5,5 5,5 5,3.5"/></svg></button><button type="button" class="icon icon-close" data-action="close" aria-label="'+i18n.closeLabel+'" title="'+i18n.closeTitle+'"><svg viewBox="0 0 6 6"><line x1="1" y1="1" x2="5" y2="5"/><line x1="5" y1="1" x2="1" y2="5"/></svg></button></div>';
-            document.body.dataset.alasCustomTitlebar = 'true';
-            document.body.prepend(titlebar);
-            const dragZone = titlebar.querySelector('.alas-titlebar-drag-zone');
-            const maximizeButton = titlebar.querySelector('[data-action="maximize"]');
-            let closeMenu = document.getElementById('alas-close-menu');
-            if (!closeMenu) {
-                closeMenu = document.createElement('div');
-                closeMenu.id = 'alas-close-menu';
-                closeMenu.setAttribute('role', 'dialog');
-                closeMenu.setAttribute('aria-modal', 'false');
-                closeMenu.innerHTML = '<p id="alas-close-menu-title"></p><div id="alas-close-menu-actions"><button type="button" data-close-action="minimize"></button><button type="button" class="alas-close-confirm" data-close-action="exit"></button></div><label id="alas-close-menu-remember"><input type="checkbox" id="alas-close-menu-remember-check" checked><i class="alas-checkbox-box" aria-hidden="true"><svg viewBox="0 0 12 12" width="9" height="9"><path d="M2.5 6.5L4.8 8.8L9.5 3.5"/></svg></i><span class="alas-close-menu-remember-text"></span></label>';
-                closeMenu.querySelector('#alas-close-menu-title').textContent = i18n.closePrompt;
-                closeMenu.querySelector('[data-close-action="minimize"]').textContent = i18n.minimizeToTrayAction;
-                closeMenu.querySelector('[data-close-action="exit"]').textContent = i18n.exitAction;
-                (closeMenu.querySelector('.alas-close-menu-remember-text') || closeMenu.querySelector('#alas-close-menu-remember span')).textContent = i18n.rememberChoice;
-                closeMenu.addEventListener('pointerdown', event => event.stopPropagation());
-                document.body.appendChild(closeMenu);
-            }
-            const setCloseMenuOpen = open => {
-                closeMenu.classList.toggle('is-open', open);
-                if (open) closeMenu.querySelector('[data-close-action="minimize"]').focus({ preventScroll: true });
-            };
-            const showClosePrompt = () => {
-                if (!closePromptEnabled) {
-                    invoke('window_close').catch(error => console.error('Failed to close window', error));
-                    return;
-                }
-                setCloseMenuOpen(true);
-            };
-            window.__ALAS_OPEN_CLOSE_PROMPT = showClosePrompt;
-            closeMenu.querySelector('[data-close-action="minimize"]').addEventListener('click', async () => {
-                const remember = closeMenu.querySelector('#alas-close-menu-remember-check')?.checked;
-                setCloseMenuOpen(false);
-                if (remember) {
-                    try { await invoke('set_close_action', { action: 'minimize' }); }
-                    catch (e) { console.error('Failed to set close action', e); }
-                }
-                try { await invoke('window_hide'); }
-                catch (error) { console.error('Failed to minimize window to tray', error); }
-            });
-            closeMenu.querySelector('[data-close-action="exit"]').addEventListener('click', async () => {
-                const remember = closeMenu.querySelector('#alas-close-menu-remember-check')?.checked;
-                if (remember) {
-                    try { await invoke('set_close_action', { action: 'exit' }); }
-                    catch (e) { console.error('Failed to set close action', e); }
-                }
-                closeMenu.querySelectorAll('button').forEach(button => { button.disabled = true; });
-                try { await invoke('window_exit_application'); }
-                catch (error) {
-                    closeMenu.querySelectorAll('button').forEach(button => { button.disabled = false; });
-                    console.error('Failed to exit application', error);
-                }
-            });
-            document.addEventListener('pointerdown', event => {
-                if (closeMenu.classList.contains('is-open') && !closeMenu.contains(event.target)) setCloseMenuOpen(false);
-            });
-            document.addEventListener('keydown', event => {
-                if (event.key === 'Escape' && closeMenu.classList.contains('is-open')) setCloseMenuOpen(false);
-            });
-            const syncMaximizeState = async () => {
-                if (!maximizeButton) return;
-                try {
-                    const maximized = await invoke('window_is_maximized');
-                    maximizeButton.dataset.maximized = maximized ? 'true' : 'false';
-                    maximizeButton.title = maximized ? i18n.restoreTitle : i18n.maximizeActionTitle;
-                    maximizeButton.setAttribute('aria-label', maximized ? i18n.restoreLabel : i18n.maximizeLabelText);
-                    maximizeButton.querySelector('.svg-maximize').style.display = maximized ? 'none' : '';
-                    maximizeButton.querySelector('.svg-restore').style.display = maximized ? '' : 'none';
-                } catch (e) {
-                    console.error('Failed to sync maximize state', e);
-                }
-            };
-            titlebar.querySelectorAll('button[data-action]').forEach(button => {
-                button.addEventListener('click', async event => {
-                    event.stopPropagation();
-                    try {
-                        switch (button.dataset.action) {
-                            case 'update':
-                                button.classList.add('is-spinning');
-                                button.title = i18n.updatingLabel;
-                                try {
-                                    await invoke('trigger_update');
-                                } catch (e) {
-                                    console.error('Failed to trigger update', e);
-                                }
-                                const pollTimer = setInterval(async () => {
-                                    try {
-                                        const status = await invoke('get_update_status');
-                                        const s = (typeof status === 'string') ? status : (status && status.status);
-                                        if (s === 'Updating') {
-                                            const progress = (typeof status.progress === 'number') ? status.progress : 0;
-                                            const title = status.title || i18n.updatingLabel;
-                                            const detail = status.detail || '';
-                                            button.title = ('[' + title + ' ' + progress + '%] ' + detail).trim();
-                                        } else if (s !== 'Checking') {
-                                            clearInterval(pollTimer);
-                                            button.classList.remove('is-spinning');
-                                            if (s === 'ReadyToRestart') {
-                                                button.title = i18n.updateReadyLabel;
-                                            } else {
-                                                button.title = i18n.checkUpdateLabel;
-                                            }
-                                        }
-                                    } catch (_) {
-                                        clearInterval(pollTimer);
-                                        button.classList.remove('is-spinning');
-                                        button.title = i18n.checkUpdateLabel;
-                                    }
-                                }, 1000);
-                                break;
-                            case 'hide': await invoke('window_hide'); break;
-                            case 'minimize': await invoke('window_minimize'); break;
-                            case 'maximize': await invoke('window_toggle_maximize'); await syncMaximizeState(); break;
-                            case 'close':
-                                if (!closePromptEnabled) {
-                                    invoke('window_close').catch(error => console.error('Failed to close window', error));
-                                    break;
-                                }
-                                try {
-                                    const action = await invoke('get_close_action');
-                                    if (action === 'minimize') {
-                                        await invoke('window_hide');
-                                        break;
-                                    } else if (action === 'exit') {
-                                        await invoke('window_exit_application');
-                                        break;
-                                    }
-                                } catch (e) {
-                                    console.error('Failed to get close action', e);
-                                }
-                                showClosePrompt();
-                                break;
-                        }
-                    } catch (error) {
-                        console.error('Failed to handle ' + button.dataset.action + ' window action', error);
-                    }
-                });
-            });
-            dragZone.addEventListener('pointerdown', event => {
-                if (!event.isPrimary || event.button !== 0 || event.target.closest('button')) return;
-                if (webviewDraggableRegionsEnabled) return;
-                event.preventDefault();
-                invoke('window_start_dragging').catch(error => { console.error('Failed to start dragging from titlebar', error); });
-            });
-            dragZone.addEventListener('dblclick', async event => {
-                if (event.target.closest('button')) return;
-                try { await invoke('window_toggle_maximize'); await syncMaximizeState(); }
-                catch (error) { console.error('Failed to toggle maximize from titlebar', error); }
-            });
-            window.addEventListener('resize', () => { void syncMaximizeState(); });
-            void syncMaximizeState();
-        };
-        ensureTitlebar();
-        if (!document.body) {
-            window.addEventListener('DOMContentLoaded', ensureTitlebar, { once: true });
-        }
-        "#);
-        s
     }
 }
