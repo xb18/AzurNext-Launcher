@@ -461,7 +461,9 @@ fn check_launcher_update_and_restart(mut status_updater: impl FnMut(SplashUpdate
     Ok(true)
 }
 
-pub fn check_and_download_launcher_update_payload() -> Result<Option<(String, PathBuf)>> {
+pub fn check_and_download_launcher_update_payload(
+    mut status_updater: impl FnMut(SplashUpdate),
+) -> Result<Option<(String, PathBuf)>> {
     let current_version = env!("CARGO_PKG_VERSION");
     let platform_key = launcher_update_platform_key();
     info!("Checking launcher update: current_version={current_version}, platform={platform_key}");
@@ -478,13 +480,24 @@ pub fn check_and_download_launcher_update_payload() -> Result<Option<(String, Pa
     let Some(platform) = manifest.platforms.get(platform_key) else {
         return Err(anyhow!("No launcher update payload for platform {platform_key}"));
     };
+    status_updater(
+        SplashUpdate::loading(
+            t!("launcher_update.updating"),
+            t!(
+                "launcher_update.available_detail",
+                version = manifest.version.clone()
+            ),
+            8,
+        )
+        .with_subtitle(t!("launcher_update.status")),
+    );
     let current_exe = std::env::current_exe()?;
     let update_path = launcher_update_temp_path(&current_exe);
     download_launcher_update(
         &platform.url,
         &update_path,
         &platform.sha256,
-        &mut |_| {},
+        &mut status_updater,
     )?;
     make_executable(&update_path)?;
     Ok(Some((manifest.version, update_path)))
@@ -1887,7 +1900,9 @@ fn main() -> Result<()> {
             get_update_method,
             set_update_method,
             get_close_action,
-            set_close_action
+            set_close_action,
+            get_autostart_status,
+            set_autostart_status
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -2598,6 +2613,16 @@ fn window_start_dragging(window: WebviewWindow) -> tauri::Result<()> {
 #[tauri::command]
 fn window_is_maximized(window: WebviewWindow) -> tauri::Result<bool> {
     window.is_maximized()
+}
+
+#[tauri::command]
+fn get_autostart_status() -> std::result::Result<crate::autostart::AutostartStatus, String> {
+    crate::autostart::query().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn set_autostart_status(enabled: bool) -> std::result::Result<crate::autostart::AutostartStatus, String> {
+    crate::autostart::set_enabled(enabled).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -4208,7 +4233,37 @@ fn main_window_titlebar_injection_script() -> String {
         if (typeof invoke !== 'function') {
             return;
         }
+
+        window.alasDesktop = window.alasDesktop || {
+            isAvailable: true,
+            minimize: () => invoke('window_minimize'),
+            toggleMaximize: () => invoke('window_toggle_maximize'),
+            isMaximized: () => invoke('window_is_maximized'),
+            minimizeToTray: () => invoke('window_hide'),
+            close: () => invoke('window_close'),
+            exit: () => invoke('window_exit_application'),
+            startDragging: () => invoke('window_start_dragging'),
+            triggerUpdate: () => invoke('trigger_update'),
+            getUpdateStatus: () => invoke('get_update_status'),
+            getUpdateMethod: () => invoke('get_update_method'),
+            setUpdateMethod: (method) => invoke('set_update_method', { method }),
+            getCloseAction: () => invoke('get_close_action'),
+            setCloseAction: (action) => invoke('set_close_action', { action }),
+            downloadGuiLog: () => invoke('download_today_gui_log'),
+            downloadLauncherLog: () => invoke('download_today_launcher_log'),
+            saveAs: (filename, data) => invoke('save_as', { filename, data }),
+            getAutostart: () => invoke('get_autostart_status'),
+            setAutostart: (enabled) => invoke('set_autostart_status', { enabled }),
+        };
+
+        if (window.alasDesktopMounted || document.querySelector('.alas-desktop-controls')) {
+            return;
+        }
+
         const ensureTitlebar = () => {
+            if (window.alasDesktopMounted || document.querySelector('.alas-desktop-controls')) {
+                return;
+            }
             if (!document.body || document.getElementById('alas-launcher-titlebar')) {
                 return;
             }
@@ -4311,7 +4366,12 @@ fn main_window_titlebar_injection_script() -> String {
                                     try {
                                         const status = await invoke('get_update_status');
                                         const s = (typeof status === 'string') ? status : (status && status.status);
-                                        if (s !== 'Checking' && s !== 'Updating') {
+                                        if (s === 'Updating') {
+                                            const progress = (typeof status.progress === 'number') ? status.progress : 0;
+                                            const title = status.title || i18n.updatingLabel;
+                                            const detail = status.detail || '';
+                                            button.title = ('[' + title + ' ' + progress + '%] ' + detail).trim();
+                                        } else if (s !== 'Checking') {
                                             clearInterval(pollTimer);
                                             button.classList.remove('is-spinning');
                                             if (s === 'ReadyToRestart') {

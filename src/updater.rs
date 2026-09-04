@@ -18,14 +18,33 @@ use crate::notify::show_system_notification;
 use crate::setup::{get_update_method, run_repository_and_dependency_update, UpdateMethod};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", content = "detail")]
+#[serde(tag = "status")]
 pub enum UpdateState {
     Idle,
     Checking,
-    Updating,
+    Updating {
+        #[serde(default)]
+        progress: u8,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        detail: String,
+    },
     ReadyToRestart,
     AlreadyLatest,
-    Failed(String),
+    Failed {
+        detail: String,
+    },
+}
+
+impl UpdateState {
+    pub fn updating(progress: u8, title: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self::Updating {
+            progress,
+            title: title.into(),
+            detail: detail.into(),
+        }
+    }
 }
 
 static IS_UPDATING: AtomicBool = AtomicBool::new(false);
@@ -98,14 +117,16 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
                         &t!("notify.update_success_restart"),
                     );
                 } else if outcome.repo_updated {
-                    set_update_state(UpdateState::Idle);
+                    set_update_state(UpdateState::AlreadyLatest);
                     show_system_notification(
                         &app_handle,
                         &t!("notify.update_title"),
                         &t!("notify.update_success"),
                     );
-                } else {
+                    thread::sleep(Duration::from_secs(3));
                     set_update_state(UpdateState::Idle);
+                } else {
+                    set_update_state(UpdateState::AlreadyLatest);
                     if !is_background {
                         show_system_notification(
                             &app_handle,
@@ -113,12 +134,16 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
                             &t!("notify.update_already_latest"),
                         );
                     }
+                    thread::sleep(Duration::from_secs(3));
+                    set_update_state(UpdateState::Idle);
                 }
             }
             Err(err) => {
                 let err_msg = format!("{err:#}");
                 warn!("Update task failed: {err_msg}");
-                set_update_state(UpdateState::Failed(err_msg.clone()));
+                set_update_state(UpdateState::Failed {
+                    detail: err_msg.clone(),
+                });
                 show_system_notification(
                     &app_handle,
                     &t!("notify.default_title"),
@@ -137,7 +162,13 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<Upda
     // 阶段 1：检查启动器自身更新
     set_update_state(UpdateState::Checking);
     let mut launcher_updated = false;
-    match crate::check_and_download_launcher_update_payload() {
+    match crate::check_and_download_launcher_update_payload(|update| {
+        set_update_state(UpdateState::updating(
+            update.progress,
+            update.title,
+            update.detail,
+        ));
+    }) {
         Ok(Some((version, payload_path))) => {
             info!("Downloaded new launcher update version {version} to {:?}", payload_path);
             set_pending_launcher_update(payload_path);
@@ -153,9 +184,19 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<Upda
     }
 
     // 阶段 2：检查并拉取 AzurNext 仓库代码与 uv 依赖
-    set_update_state(UpdateState::Updating);
+    set_update_state(UpdateState::updating(
+        0,
+        t!("setup.updating"),
+        t!("setup.fetching_patches"),
+    ));
     let cancel = Arc::new(AtomicBool::new(false));
-    let repo_updated = match run_repository_and_dependency_update(cancel, |_| {}) {
+    let repo_updated = match run_repository_and_dependency_update(cancel, |update| {
+        set_update_state(UpdateState::updating(
+            update.progress,
+            update.title,
+            update.detail,
+        ));
+    }) {
         Ok(updated) => updated,
         Err(err) => {
             error!("Repository update failed: {err:#}");
