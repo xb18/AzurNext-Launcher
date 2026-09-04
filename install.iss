@@ -53,7 +53,7 @@ UninstallDisplayIcon={app}\alas-launcher.exe
 Name: "chinesesimplified"; MessagesFile: "{#ChineseMessagesFile}"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 ; --------------------------------------------------------------------------
 ;  目录权限：Inno 自带 Permissions 做首轮设置，[Code] 中 icacls 做兜底修复
