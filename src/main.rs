@@ -138,10 +138,10 @@ struct LauncherUpdateManifest {
     platforms: HashMap<String, LauncherUpdatePlatform>,
 }
 
-#[derive(Debug, Deserialize)]
-struct LauncherUpdatePlatform {
-    url: String,
-    sha256: String,
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct LauncherUpdatePlatform {
+    pub url: String,
+    pub sha256: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -467,9 +467,7 @@ fn check_launcher_update_and_restart(mut status_updater: impl FnMut(SplashUpdate
     Ok(true)
 }
 
-pub fn check_and_download_launcher_update_payload(
-    mut status_updater: impl FnMut(SplashUpdate),
-) -> Result<Option<(String, PathBuf)>> {
+pub(crate) fn check_launcher_update_available() -> Result<Option<(String, LauncherUpdatePlatform)>> {
     let current_version = env!("CARGO_PKG_VERSION");
     let platform_key = launcher_update_platform_key();
     info!("Checking launcher update: current_version={current_version}, platform={platform_key}");
@@ -483,30 +481,52 @@ pub fn check_and_download_launcher_update_payload(
         return Ok(None);
     }
     info!("Newer launcher version found: {current_version} -> {}", manifest.version);
-    let Some(platform) = manifest.platforms.get(platform_key) else {
-        return Err(anyhow!("No launcher update payload for platform {platform_key}"));
-    };
-    status_updater(
-        SplashUpdate::loading(
-            t!("launcher_update.updating"),
-            t!(
-                "launcher_update.available_detail",
-                version = manifest.version.clone()
-            ),
-            8,
-        )
-        .with_subtitle(t!("launcher_update.status")),
-    );
+    let platform = manifest
+        .platforms
+        .get(platform_key)
+        .cloned()
+        .ok_or_else(|| anyhow!("No launcher update payload for platform {platform_key}"))?;
+    Ok(Some((manifest.version, platform)))
+}
+
+pub(crate) fn download_launcher_update_payload(
+    platform: &LauncherUpdatePlatform,
+    status_updater: impl FnMut(SplashUpdate),
+) -> Result<PathBuf> {
     let current_exe = std::env::current_exe()?;
     let update_path = launcher_update_temp_path(&current_exe);
     download_launcher_update(
         &platform.url,
         &update_path,
         &platform.sha256,
-        &mut status_updater,
+        status_updater,
     )?;
     make_executable(&update_path)?;
-    Ok(Some((manifest.version, update_path)))
+    Ok(update_path)
+}
+
+#[allow(dead_code)]
+pub fn check_and_download_launcher_update_payload(
+    mut status_updater: impl FnMut(SplashUpdate),
+) -> Result<Option<(String, PathBuf)>> {
+    match check_launcher_update_available()? {
+        Some((version, platform)) => {
+            status_updater(
+                SplashUpdate::loading(
+                    t!("launcher_update.updating"),
+                    t!(
+                        "launcher_update.available_detail",
+                        version = version.clone()
+                    ),
+                    8,
+                )
+                .with_subtitle(t!("launcher_update.status")),
+            );
+            let update_path = download_launcher_update_payload(&platform, status_updater)?;
+            Ok(Some((version, update_path)))
+        }
+        None => Ok(None),
+    }
 }
 
 fn download_launcher_update(
@@ -1905,6 +1925,9 @@ fn main() -> Result<()> {
             window_start_dragging,
             window_is_maximized,
             trigger_update,
+            check_launcher_update,
+            start_download_launcher_update,
+            cancel_or_dismiss_update,
             get_update_status,
             get_update_method,
             set_update_method,
@@ -2549,6 +2572,22 @@ fn window_exit_application(
 #[tauri::command]
 fn trigger_update(app_handle: tauri::AppHandle) -> std::result::Result<String, String> {
     crate::updater::trigger_update(app_handle, false).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn check_launcher_update(app_handle: tauri::AppHandle) -> std::result::Result<String, String> {
+    crate::updater::check_launcher_update(app_handle, false).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn start_download_launcher_update(app_handle: tauri::AppHandle) -> std::result::Result<String, String> {
+    crate::updater::start_download_launcher_update(app_handle).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn cancel_or_dismiss_update(app_handle: tauri::AppHandle) -> std::result::Result<(), String> {
+    crate::updater::cancel_or_dismiss_update(&app_handle);
+    Ok(())
 }
 
 #[tauri::command]

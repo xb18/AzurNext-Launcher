@@ -71,6 +71,7 @@ setup:
   creating_venv_title: "建立虛擬環境"
 
 launcher_update:
+  available_title: "發現啟動器新版本"
   updating: "啟動器更新中"
   status: "啟動器更新中"
   available_detail: "發現啟動器新版本 %{version}，正在準備下載。"
@@ -157,6 +158,7 @@ notify:
   open: "開啟"
   update_checking: "正在檢查啟動器更新..."
   update_in_progress: "正在更新啟動器..."
+  update_available: "發現啟動器新版本 %{version}，可前往應用程式內下載更新。"
   update_success: "啟動器已更新至最新版本！"
   update_success_restart: "啟動器更新已就緒，重新啟動後生效。"
   update_already_latest: "啟動器目前已經是最新版本。"

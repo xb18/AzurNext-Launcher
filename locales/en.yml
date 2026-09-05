@@ -71,6 +71,7 @@ setup:
   creating_venv_title: "Create virtual environment"
 
 launcher_update:
+  available_title: "Launcher Update Available"
   updating: "Updating launcher"
   status: "Updating launcher"
   available_detail: "Launcher version %{version} is available. Preparing download."
@@ -157,6 +158,7 @@ notify:
   open: "Open"
   update_checking: "Checking for launcher updates..."
   update_in_progress: "Updating launcher..."
+  update_available: "New launcher version %{version} is available. Open the app to download."
   update_success: "Launcher has been updated to the latest version!"
   update_success_restart: "Launcher update is ready. Restart to apply."
   update_already_latest: "Launcher is already up to date."
