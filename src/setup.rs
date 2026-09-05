@@ -504,11 +504,10 @@ pub fn get_current_repo_commit() -> Option<String> {
     } else {
         PathBuf::from("git")
     };
-    let output = std::process::Command::new(exe)
-        .current_dir(&repo_dir)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.current_dir(&repo_dir)
+        .args(["rev-parse", "HEAD"]);
+    let output = cmd.create_no_window().output().ok()?;
     if output.status.success() {
         let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !commit.is_empty() {
