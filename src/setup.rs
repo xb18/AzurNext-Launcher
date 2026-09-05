@@ -398,8 +398,93 @@ pub fn get_close_action() -> CloseAction {
         .unwrap_or(CloseAction::Ask)
 }
 
+/// 检查 Python 虚拟环境中的项目核心依赖是否已就绪。
+/// 优先使用纯文件系统检查（< 0.1ms），避免增加启动耗时以维持秒开。
+fn has_core_dependencies() -> bool {
+    let venv = venv_dir();
+    // Windows 虚拟环境标准目录: .venv/Lib/site-packages/rich
+    #[cfg(windows)]
+    {
+        let win_path = venv.join("Lib").join("site-packages").join("rich");
+        if win_path.is_dir() {
+            return true;
+        }
+    }
+
+    // Unix (macOS / Linux) 虚拟环境标准目录: .venv/lib/python*/site-packages/rich
+    #[cfg(not(windows))]
+    {
+        let lib_dir = venv.join("lib");
+        if let Ok(entries) = fs::read_dir(lib_dir) {
+            for entry in entries.flatten() {
+                if entry.path().join("site-packages").join("rich").is_dir() {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 兜底验证：若文件结构由于非标准配置未直接命中，通过极轻量的 python 进程验证
+    let python = venv_python();
+    if !python.exists() {
+        return false;
+    }
+    let mut check = Command::new(&python);
+    check.args(["-c", "import rich"]);
+    isolate_python_child_environment(&mut check);
+    check
+        .create_no_window()
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// 检查虚拟环境中的所有依赖包是否与项目 pyproject.toml / uv.lock 完全一致且已同步。
+/// 使用 `uv sync --check --offline` 极速核验（~70ms，纯离线读元数据），
+/// 当后续代码更新新增依赖、修改依赖或虚拟环境有任何包缺失时，均能准确识别并触发依赖补全安装。
+fn check_all_dependencies_synchronized() -> bool {
+    let python = venv_python();
+    let repo_dir = alas_repo_dir();
+    let pyproject = repo_dir.join("pyproject.toml");
+    if !pyproject.exists() {
+        return false;
+    }
+
+    let uv = if venv_uv().exists() {
+        venv_uv()
+    } else if let Ok(bootstrap) = bootstrap_uv_path() {
+        bootstrap
+    } else {
+        return false;
+    };
+
+    let mut cmd = Command::new(&uv);
+    cmd.current_dir(&repo_dir)
+        .args([
+            "sync",
+            "--check",
+            "--offline",
+            "--no-dev",
+            "--no-install-project",
+            "--python",
+        ])
+        .arg(&python)
+        .env("UV_NO_PROGRESS", "1")
+        .env("UV_PYTHON_INSTALL_DIR", venv_python_install_dir());
+
+    uv_python_env_with_install_dir(&mut cmd, &venv_python_install_dir());
+    ignore_uv_index_env(&mut cmd);
+    isolate_python_child_environment(&mut cmd);
+    bypass_proxy_for_child(&mut cmd);
+
+    cmd.create_no_window()
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub fn is_runtime_ready() -> bool {
-    venv_python().exists()
+    venv_python().exists() && has_core_dependencies() && check_all_dependencies_synchronized()
 }
 
 pub fn is_repo_ready() -> bool {
@@ -493,7 +578,8 @@ pub fn setup_alas_repo(
         git_update(&mut status_updater, &bootstrap_uv, &cancel_requested)?;
     }
 
-    if skip_dependency_sync {
+    let should_skip_dep_sync = skip_dependency_sync && is_runtime_ready();
+    if should_skip_dep_sync {
         info!("Skipping project dependency sync for fast startup");
         status_updater(
             SplashUpdate::loading(t!("setup.finishing"), t!("setup.ready_to_launch"), 94)

@@ -1,7 +1,9 @@
 use std::{
     collections::BTreeSet,
+    fs,
     net::{TcpListener, TcpStream},
-    process::{Command, ExitStatus},
+    path::Path,
+    process::{Command, ExitStatus, Stdio},
     thread::sleep,
     time::Duration,
 };
@@ -9,7 +11,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use command_group::{CommandGroup, GroupChild};
 use serde_json::Value as JsonValue;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::setup::{isolate_python_child_environment, venv_python};
 use crate::window_util::CreateNoWindow as _;
@@ -227,9 +229,23 @@ impl ManagedBackend {
         std::env::set_var("ALAS_LAUNCHER_PID", format!("{}", std::process::id()));
         let _ = kill_processes_using_port(config.port);
 
+        let log_dir = Path::new("log");
+        let _ = fs::create_dir_all(log_dir);
+        let startup_stderr_path = log_dir.join("backend_startup_stderr.log");
+
         let mut command = Command::new(venv_python());
         command.args(config.args());
         isolate_python_child_environment(&mut command);
+
+        if let Ok(stderr_file) = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&startup_stderr_path)
+        {
+            command.stderr(Stdio::from(stderr_file));
+        }
+
         let child = command.group().create_no_window().spawn()?;
         let mut res = Self { child: Some(child) };
 
@@ -237,10 +253,32 @@ impl ManagedBackend {
         let start_time = std::time::Instant::now();
         while start_time.elapsed() < BACKEND_STARTUP_TIMEOUT {
             if TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+                // 后端就绪，若启动 stderr 为空则清理临时文件
+                if let Ok(metadata) = fs::metadata(&startup_stderr_path) {
+                    if metadata.len() == 0 {
+                        let _ = fs::remove_file(&startup_stderr_path);
+                    }
+                }
                 return Ok(res);
             }
             if let Some(child) = res.child.as_mut() {
                 if let Some(status) = child.try_wait()? {
+                    let stderr_content = fs::read_to_string(&startup_stderr_path).unwrap_or_default();
+                    let trimmed_stderr = stderr_content.trim();
+                    if !trimmed_stderr.is_empty() {
+                        error!(
+                            "Backend exited before port {} was ready ({}).\n--- Backend stderr ---\n{}\n----------------------",
+                            config.port, status, trimmed_stderr
+                        );
+                        let last_lines: Vec<&str> = trimmed_stderr.lines().rev().take(6).collect();
+                        let summary = last_lines.into_iter().rev().collect::<Vec<&str>>().join("\n");
+                        return Err(anyhow!(
+                            "Backend exited before port {} was ready: {}\n{}",
+                            config.port,
+                            status,
+                            summary
+                        ));
+                    }
                     return Err(anyhow!(
                         "Backend exited before port {} was ready: {}",
                         config.port,
