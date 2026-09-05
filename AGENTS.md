@@ -79,6 +79,12 @@ cargo tauri dev                 # 启动 Tauri 开发调试模式
 - CSS 类名使用 `.alas-` 前缀隔离命名空间，避免与 WebUI 内部样式冲突；
 - 前端与 Rust 通信统一走 Tauri IPC（`window.__TAURI__.core.invoke`）。
 
+### 7. 瘦外壳（Thin Shell）与接口暴露规范
+
+- **Rust 只暴露底层接口**：Rust 外壳仅作为原子的系统能力提供者（窗口控制、系统原生 Toast 通知、系统浏览器、文件资源管理器、更新执行等），严禁承载应用层业务逻辑（如调度判定、任务状态、业务通知决策等），更不得反向通过 SSE/长连接在后台轮询读取 WebUI 的业务数据流。
+- **接口统一收拢在 `window.alasDesktop`**：所有暴露给 Web 前端的桌面原生 API，一律统一挂载在 `window.alasDesktop` 对象下（如 `window.alasDesktop.showNotification(title, content)`），保持清晰、规范的单命名空间（类似 Electron 的 `window.electronAPI` 规范），严禁暴露散落的全局变量。
+- **Web 端做逻辑业务开发**：业务条件判断、通知触发时机、多环境自适应（有壳调用 `window.alasDesktop` 底层接口，无壳回退为 Web 界面 UI Toast）全部由 Web 端（Python / 前端 JS）自行处理与决策。
+
 ---
 
 ## Git 提交规范

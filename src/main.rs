@@ -33,7 +33,6 @@ use std::{
 use crate::{
     backend::{ManagedBackend, WebuiLaunchConfig},
     launcher_control::start_launcher_control_stream,
-    notify::{start_notify_stream, NotificationClickHandler},
     setup::{get_deploy_config, setup_alas_repo, setup_environment, SplashUpdate},
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -1849,7 +1848,6 @@ fn main() -> Result<()> {
     let launch_blocked_for_setup = launch_blocked.clone();
     let recreating_main_window_for_single_instance = recreating_main_window.clone();
     let recreating_main_window_for_setup = recreating_main_window.clone();
-    let recreating_main_window_for_run = recreating_main_window.clone();
     let launch_blocked_for_run = launch_blocked.clone();
     let start_minimized_for_run = start_minimized;
 
@@ -1879,7 +1877,12 @@ fn main() -> Result<()> {
             get_close_action,
             set_close_action,
             get_autostart_status,
-            set_autostart_status
+            set_autostart_status,
+            show_notification,
+            focus_window,
+            open_external,
+            open_folder,
+            get_launcher_info
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -2051,7 +2054,6 @@ fn main() -> Result<()> {
                     let setup_cancel_requested = setup_cancel_requested.clone();
                     let setup_running = setup_running.clone();
                     let setup_completed = setup_completed.clone();
-                    let recreating_main_window_for_notify = recreating_main_window_for_run.clone();
                     let start_minimized = start_minimized_for_run;
                     thread::spawn(move || {
                         setup_running.store(true, Ordering::SeqCst);
@@ -2200,23 +2202,6 @@ fn main() -> Result<()> {
                             }
                         };
                         *backend.lock().unwrap() = Some(b);
-                        let notification_click: NotificationClickHandler = {
-                            let app_handle = app_handle.clone();
-                            let recreating_main_window = recreating_main_window_for_notify.clone();
-                            Arc::new(move || {
-                                restore_main_window_from_any_thread(
-                                    app_handle.clone(),
-                                    port,
-                                    recreating_main_window.clone(),
-                                );
-                            })
-                        };
-                        start_notify_stream(
-                            app_handle.clone(),
-                            port,
-                            allow_exit.clone(),
-                            notification_click,
-                        );
                         start_launcher_control_stream(port, allow_exit.clone());
                         crate::updater::start_background_updater_if_enabled(app_handle.clone());
                         status_updater(
@@ -2626,6 +2611,103 @@ async fn retry_backend_connection(
         e.to_string()
     })?;
     Ok(true)
+}
+
+#[tauri::command]
+fn show_notification(
+    app: tauri::AppHandle,
+    title: String,
+    content: String,
+) -> std::result::Result<(), String> {
+    let app_handle = app.clone();
+    let handler: Arc<dyn Fn() + Send + Sync + 'static> = Arc::new(move || {
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = reveal_window(&window);
+        }
+    });
+    crate::notify::show_notification(&app, &title, &content, &handler);
+    Ok(())
+}
+
+#[tauri::command]
+fn focus_window(window: WebviewWindow) -> tauri::Result<()> {
+    reveal_window(&window)
+}
+
+#[tauri::command]
+fn open_external(url: String) -> std::result::Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("无法打开外部链接: {e:#}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("无法打开外部链接: {e:#}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("无法打开外部链接: {e:#}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_folder(path: String) -> std::result::Result<(), String> {
+    let target = std::path::Path::new(&path);
+    if !target.exists() {
+        return Err(format!("指定路径不存在: {path}"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {e:#}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {e:#}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("无法打开文件夹: {e:#}"))?;
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct LauncherInfo {
+    version: String,
+    platform: String,
+}
+
+#[tauri::command]
+fn get_launcher_info() -> LauncherInfo {
+    LauncherInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        platform: std::env::consts::OS.to_string(),
+    }
 }
 
 fn page_load_injector(_webview: WebviewWindow, _payload: PageLoadPayload<'_>) {
@@ -4048,19 +4130,6 @@ fn minimize_main_window_to_tray(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     {
         set_macos_activation_policy(app, false);
-    }
-}
-
-fn restore_main_window_from_any_thread(
-    app: tauri::AppHandle,
-    port: u16,
-    recreating_main_window: Arc<AtomicBool>,
-) {
-    let app_for_restore = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || {
-        restore_main_window_from_tray(&app_for_restore, port, recreating_main_window);
-    }) {
-        warn!("Failed to schedule main window restore: {:?}", e);
     }
 }
 
