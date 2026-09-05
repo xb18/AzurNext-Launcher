@@ -49,6 +49,7 @@ use rust_i18n::t;
 use serde::Deserialize;
 use serde_json::to_string;
 use sha2::{Digest, Sha256};
+#[allow(unused_imports)]
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -1847,6 +1848,7 @@ fn main() -> Result<()> {
     let allow_exit_for_setup = allow_exit.clone();
     let launch_blocked_for_setup = launch_blocked.clone();
     let recreating_main_window_for_single_instance = recreating_main_window.clone();
+    #[allow(unused_variables)]
     let recreating_main_window_for_setup = recreating_main_window.clone();
     #[allow(unused_variables)]
     let recreating_main_window_for_run = recreating_main_window.clone();

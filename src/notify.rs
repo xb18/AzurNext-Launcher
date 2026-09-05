@@ -7,7 +7,9 @@ use std::{
 };
 
 #[cfg(windows)]
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
+#[cfg(any(windows, target_os = "linux"))]
+use anyhow::Result;
 
 #[cfg(target_os = "linux")]
 use notify_rust::{Hint, Notification};
