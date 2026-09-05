@@ -492,6 +492,7 @@ pub fn is_repo_ready() -> bool {
     dir.join("pyproject.toml").exists() && dir.join("gui.py").exists()
 }
 
+#[allow(dead_code)]
 pub fn get_current_repo_commit() -> Option<String> {
     let repo_dir = alas_repo_dir();
     let git_exe = if cfg!(windows) {
@@ -517,6 +518,7 @@ pub fn get_current_repo_commit() -> Option<String> {
     None
 }
 
+#[allow(dead_code)]
 pub fn run_repository_and_dependency_update(
     cancel_requested: Arc<AtomicBool>,
     mut status_updater: impl FnMut(SplashUpdate),

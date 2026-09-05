@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Mutex,
     },
     thread,
     time::Duration,
@@ -12,10 +12,10 @@ use anyhow::Result;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::notify::show_system_notification;
-use crate::setup::{get_update_method, run_repository_and_dependency_update, UpdateMethod};
+use crate::setup::{get_update_method, UpdateMethod};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status")]
@@ -99,7 +99,6 @@ pub fn has_pending_launcher_update() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateOutcome {
     pub launcher_updated: Option<String>,
-    pub repo_updated: bool,
 }
 
 /// 触发更新流程（供手动点击或后台定时器调用）
@@ -132,15 +131,6 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
                         &t!("notify.update_title"),
                         &t!("notify.update_success_restart"),
                     );
-                } else if outcome.repo_updated {
-                    emit_and_set_update_state(&app_handle, UpdateState::AlreadyLatest);
-                    show_system_notification(
-                        &app_handle,
-                        &t!("notify.update_title"),
-                        &t!("notify.update_success"),
-                    );
-                    thread::sleep(Duration::from_secs(3));
-                    emit_and_set_update_state(&app_handle, UpdateState::Idle);
                 } else {
                     emit_and_set_update_state(&app_handle, UpdateState::AlreadyLatest);
                     if !is_background {
@@ -174,10 +164,10 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
     Ok("started".to_string())
 }
 
-fn perform_update_pipeline(app: &AppHandle, is_background: bool) -> Result<UpdateOutcome> {
-    info!("Starting update pipeline (is_background={})...", is_background);
+fn perform_update_pipeline(app: &AppHandle, _is_background: bool) -> Result<UpdateOutcome> {
+    info!("Starting launcher update check...");
 
-    // 阶段 1：检查启动器自身更新
+    // 检查启动器外壳自身更新
     emit_and_set_update_state(app, UpdateState::Checking);
     let mut launcher_updated = None;
     match crate::check_and_download_launcher_update_payload(|update| {
@@ -200,40 +190,12 @@ fn perform_update_pipeline(app: &AppHandle, is_background: bool) -> Result<Updat
         }
         Err(err) => {
             warn!("Failed checking launcher update: {err:#}");
-            // 启动器更新检查失败不阻塞仓库代码更新
+            return Err(err);
         }
     }
 
-    // 阶段 2：检查并拉取 AzurNext 仓库代码与 uv 依赖
-    emit_and_set_update_state(
-        app,
-        UpdateState::updating(
-            0,
-            t!("setup.updating"),
-            t!("setup.fetching_patches"),
-        ),
-    );
-    let cancel = Arc::new(AtomicBool::new(false));
-    let repo_updated = match run_repository_and_dependency_update(cancel, |update| {
-        emit_and_set_update_state(
-            app,
-            UpdateState::updating(
-                update.progress,
-                update.title,
-                update.detail,
-            ),
-        );
-    }) {
-        Ok(updated) => updated,
-        Err(err) => {
-            error!("Repository update failed: {err:#}");
-            return Err(err);
-        }
-    };
-
     Ok(UpdateOutcome {
         launcher_updated,
-        repo_updated,
     })
 }
 
