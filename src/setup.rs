@@ -272,7 +272,7 @@ fn venv_git_template_dir() -> PathBuf {
 }
 
 fn bootstrap_uv_path() -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("azurpilot-bootstrap-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("azurnext-bootstrap-{}", std::process::id()));
     fs::create_dir_all(&dir)?;
     let path = dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
     if !path.exists() {
@@ -318,7 +318,7 @@ fn find_on_path(executable: &str) -> Option<PathBuf> {
 
 pub fn setup_environment() -> Result<()> {
     let dir = alas_repo_dir();
-    info!("AzurPilot dir is {:?}", &dir);
+    info!("AzurNext dir is {:?}", &dir);
     set_current_dir(&dir)?;
     prepend_path_to_env("PATH", venv_bin_dir());
     if cfg!(windows) {
@@ -1277,6 +1277,7 @@ gm.git_install()
         || {
             let mut cmd = Command::new(&python);
             cmd.args(["-c", script])
+                .env("AZURNEXT_BOOTSTRAP_UV", &bootstrap_uv)
                 .env("AZURPILOT_BOOTSTRAP_UV", &bootstrap_uv);
             isolate_python_child_environment(&mut cmd);
             bypass_proxy_for_child(&mut cmd);

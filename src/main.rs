@@ -88,17 +88,20 @@ const TAURI_CONFIG_SOURCE: &str = include_str!("../tauri.conf.json");
 const LAUNCHER_UPDATE_URL: &str = env!("LAUNCHER_UPDATE_URL");
 const LAUNCHER_UPDATE_FALLBACK_URL: &str =
     "https://ghfast.top/https://github.com/xb18/AzurNext-Launcher/releases/latest/download/stable.json";
-const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
+const LAUNCHER_UPDATE_SKIP_ENV: &str = "AZURNEXT_SKIP_LAUNCHER_UPDATE";
+const LAUNCHER_UPDATE_SKIP_ENV_LEGACY: &str = "AZURPILOT_SKIP_LAUNCHER_UPDATE";
 const MINI_LAUNCHER_VERSION: &str = "0.0.1";
 const LAUNCHER_UPDATE_MTLS_IDENTITY: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/launcher_mtls_identity.pem"));
-const LAUNCHER_UPDATE_BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 AZURPILOT_LAUNCHER_UPDATE/2.0.4";
+const LAUNCHER_UPDATE_BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 AZURNEXT_LAUNCHER_UPDATE/2.0.4";
 const LAUNCHER_UPDATE_MAX_CONNECTIONS: usize = 8;
 const LAUNCHER_UPDATE_MIN_CHUNK_BYTES: u64 = 1024 * 1024;
 const LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_START: u8 = 8;
 const LAUNCHER_UPDATE_DOWNLOAD_PROGRESS_END: u8 = 88;
 #[cfg(windows)]
-const LAUNCHER_UPDATE_NO_CONSOLE_ENV: &str = "AZURPILOT_NO_ATTACH_CONSOLE";
+const LAUNCHER_UPDATE_NO_CONSOLE_ENV: &str = "AZURNEXT_NO_ATTACH_CONSOLE";
+#[cfg(windows)]
+const LAUNCHER_UPDATE_NO_CONSOLE_ENV_LEGACY: &str = "AZURPILOT_NO_ATTACH_CONSOLE";
 #[cfg(windows)]
 const LAUNCHER_UPDATE_APPLY_ARG: &str = "--apply-launcher-update";
 const PREVIEW_NO_UPDATE_ARGS: &[&str] = &[
@@ -356,9 +359,12 @@ fn launcher_version_is_mini(version: &str) -> bool {
 }
 
 fn check_launcher_update_and_restart(mut status_updater: impl FnMut(SplashUpdate)) -> Result<bool> {
-    if std::env::var_os(LAUNCHER_UPDATE_SKIP_ENV).is_some() {
+    if std::env::var_os(LAUNCHER_UPDATE_SKIP_ENV).is_some()
+        || std::env::var_os(LAUNCHER_UPDATE_SKIP_ENV_LEGACY).is_some()
+    {
         info!("Skipping launcher update check after restart");
         std::env::remove_var(LAUNCHER_UPDATE_SKIP_ENV);
+        std::env::remove_var(LAUNCHER_UPDATE_SKIP_ENV_LEGACY);
         return Ok(false);
     }
 
@@ -675,7 +681,7 @@ fn download_launcher_update_parallel(
     status_updater: &mut impl FnMut(SplashUpdate),
 ) -> Result<u64> {
     let temp_dir = TempDirBuilder::new()
-        .prefix("azurpilot-launcher-update-")
+        .prefix("azurnext-launcher-update-")
         .tempdir()
         .context("create temporary launcher update download directory")?;
     let (progress_sender, progress_receiver) = mpsc::channel();
@@ -1169,7 +1175,7 @@ fn launcher_update_temp_path(current_exe: &Path) -> PathBuf {
         .and_then(|name| name.to_str())
         .unwrap_or("alas-launcher");
     std::env::temp_dir().join(format!(
-        "azurpilot-launcher-update-{}-{file_name}",
+        "azurnext-launcher-update-{}-{file_name}",
         std::process::id()
     ))
 }
@@ -1224,7 +1230,7 @@ fn log_helper(msg: &str, target_path: Option<&Path>) {
     let now = Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
     let line = format!("{now} [Update-Helper] {msg}\n");
 
-    let temp_log = std::env::temp_dir().join("azurpilot-launcher-update.log");
+    let temp_log = std::env::temp_dir().join("azurnext-launcher-update.log");
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&temp_log) {
         let _ = f.write_all(line.as_bytes());
     }
@@ -1246,7 +1252,7 @@ fn log_helper(msg: &str, target_path: Option<&Path>) {
 fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Result<()> {
     let parent_pid = std::process::id();
     let helper_path = std::env::temp_dir().join(format!(
-        "azurpilot-launcher-update-helper-{parent_pid}.exe"
+        "azurnext-launcher-update-helper-{parent_pid}.exe"
     ));
 
     info!("Preparing launcher update: copying current_exe ({:?}) -> helper ({:?})", current_exe, helper_path);
@@ -1826,8 +1832,11 @@ fn main() -> Result<()> {
         use crate::window_util::HAS_CONSOLE;
         use std::sync::atomic::Ordering;
         use winapi::um::wincon::{AttachConsole, ATTACH_PARENT_PROCESS};
-        if std::env::var_os(LAUNCHER_UPDATE_NO_CONSOLE_ENV).is_some() {
+        if std::env::var_os(LAUNCHER_UPDATE_NO_CONSOLE_ENV).is_some()
+            || std::env::var_os(LAUNCHER_UPDATE_NO_CONSOLE_ENV_LEGACY).is_some()
+        {
             std::env::remove_var(LAUNCHER_UPDATE_NO_CONSOLE_ENV);
+            std::env::remove_var(LAUNCHER_UPDATE_NO_CONSOLE_ENV_LEGACY);
         } else {
             HAS_CONSOLE.store(AttachConsole(ATTACH_PARENT_PROCESS) != 0, Ordering::Relaxed);
         }
