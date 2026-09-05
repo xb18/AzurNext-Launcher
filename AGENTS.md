@@ -98,6 +98,21 @@ CI 构建会并发执行三大平台的编译与打包，任何单平台编译�
 - **接口统一收拢在 `window.alasDesktop`**：所有暴露给 Web 前端的桌面原生 API，一律统一挂载在 `window.alasDesktop` 对象下（如 `window.alasDesktop.showNotification(title, content)`），保持清晰、规范的单命名空间（类似 Electron 的 `window.electronAPI` 规范），严禁暴露散落的全局变量。
 - **Web 端做逻辑业务开发**：业务条件判断、通知触发时机、多环境自适应（有壳调用 `window.alasDesktop` 底层接口，无壳回退为 Web 界面 UI Toast）全部由 Web 端（Python / 前端 JS）自行处理与决策。
 
+### 8. 启动器外壳多步交互更新规范（Multi-Step Update Flow）
+
+- **职责边界严格解耦**：右上角仅负责启动器外壳（Launcher）自身的检查与更新，主工程/WebUI 更新由内部专属模块独立负责，绝对禁止双向耦合。
+- **四步交互状态机**：
+  1. **检查更新（`Checking`）**：用户触发后仅比对远端 Release Manifest 版本号，**严禁**自动静默下载抢跑带宽。若已是最新转为 `AlreadyLatest`，并在 3.5s 后静默重置为 `Idle`；
+  2. **发现新版本与用户确认（`Available`）**：检测到新版本后进入待确认状态，徽标展示琥珀高亮药丸（如 `★ 发现新版 vX.Y.Z`），主动弹出确认框；若用户取消则保留徽标，随时支持点击再次弹出；
+  3. **分块多线程下载与动态推流（`Updating`）**：用户确认后启动分块多线程下载，并通过事件/轮询向前端实时推流进度百分比（`SplashUpdate`），徽标以线性渐变背景实时渲染动态进度条与数字；
+  4. **下载完成与确认重启（`ReadyToRestart`）**：载荷下载并通过 SHA-256 校验后徽标变绿，弹出重启确认框，用户确认后调用 `window_exit_application` 触发 helper 进程无缝替换并重启生效。
+
+### 9. 版本号与 Git Tag 命名规范
+
+- **Git Tag 推荐带 `v`**：发版标签统一采用带 `v` 前缀的标准 SemVer 格式（如 **`v2.1.27`**），符合 GitHub Release 与主流开源社区规范；
+- **配置内版本号保持纯数字**：`Cargo.toml` 与 `tauri.conf.json` 中的版本号遵循严格 SemVer，必须保持纯数字（如 `2.1.27`），严禁写入字母 `v`；
+- **CI 全自动兼容剥离**：CI 打包脚本自动剥离 Tag 的 `v` 前缀写入安装包与 `stable.json` 的 `"version"` 字段，同时下载链接保持与 Release Tag 路径一致。无论打 `v2.1.xx` 还是 `2.1.xx` 均能稳定构建。
+
 ---
 
 ## Git 提交规范
