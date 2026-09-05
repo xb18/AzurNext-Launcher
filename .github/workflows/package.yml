@@ -81,7 +81,7 @@ jobs:
           if not semver_pattern.fullmatch(version):
               raise SystemExit(
                   f"Version '{version}' is not valid SemVer for Cargo/Tauri. "
-                  "Use a tag such as '2.0.6' instead of 'v2.0.6'."
+                  "Use a tag such as 'v2.1.27' or '2.1.27'."
               )
 
           def replace_once(path: Path, pattern: str, replacement: str) -> None:
