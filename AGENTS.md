@@ -68,10 +68,23 @@ cargo tauri dev                 # 启动 Tauri 开发调试模式
   - `locales/ja.yml`（日语）
 - 在 Rust 中统一通过 `t!("module.key")` 或 `t!("module.key", param = value)` 宏引用。
 
-### 5. 跨平台兼容守卫
+### 5. 全平台兼容守卫与构建保障（强制支持 Windows / macOS / Linux）
 
-- 所有涉及系统特异性的逻辑（Windows WinRT / Registry / macOS ActivationPolicy / Unix Signals），必须使用 `#[cfg(...)]` 进行严格平台守卫。
-- 保证代码在 Windows、macOS 和 Linux 上均可无警告编译。
+启动器作为跨平台桌面外壳，必须原生支持 **Windows（x86_64 / arm64）、macOS（Intel / Apple Silicon）以及 Linux（x86_64）**。
+CI 构建会并发执行三大平台的编译与打包，任何单平台编译失败或未消除的警告均会导致发版阻断。
+
+必须严格遵守以下跨平台编码准则：
+
+1. **平台逻辑隔离与严格守卫**：
+   - 涉及系统特异性的能力（Windows WinRT / Registry / macOS ActivationPolicy / Unix Signals / Linux freedesktop Notification 等），必须使用 `#[cfg(...)]` 进行严格平台守卫。
+   - 暴露的原生能力接口（如 `open_external`、`open_folder`、`show_notification`）必须同步实现 Windows、macOS 和 Linux 三端逻辑，严禁单平台留空或漏写。
+
+2. **避免条件编译下的符号与依赖缺失**：
+   - **慎防清理“死代码”误删跨平台代码**：在当前宿主平台（如 Windows）下开发时，macOS（如 `tauri::RunEvent::Reopen`）或 Linux 专属分支中的函数与变量在本地不会被语法分析器标注引用，在重构或删除死代码时**必须主动审视 macOS / Linux 分支**，严禁误删跨平台运行所依赖的恢复函数或闭包变量。
+   - **按需条件导入（Conditional Imports）**：特定平台专属的 crate、宏或类型（如 Windows 下的 `windows_registry`、Linux 下的 `notify_rust`），必须加 `#[cfg(...)]` 条件导入；对于跨平台公共函数签名中使用的通用类型（如 `anyhow::Result`），必须保证在所有启用该函数的平台（如 `#[cfg(any(windows, target_os = "linux"))]`）均有导入。
+
+3. **零告警编译保证（No Warnings）**：
+   - 部分类型或变量若仅在特定平台被使用（例如系统托盘仅在 Windows/macOS 创建，Linux 不创建），在通用作用域或非目标平台上必须添加 `#[allow(unused_imports)]` 或 `#[allow(unused_variables)]`，确保在 Windows、macOS 和 Linux 上均可 0 警告通过编译。
 
 ### 6. 自定义标题栏与 DOM 注入规范
 
@@ -130,6 +143,6 @@ Type 类型：
 2. **启动性能**：是否无意引入了启动阶段的阻塞 IO 或网络请求；
 3. **无关修改**：是否有意外修改无关文件（顺手修改污染、无意义格式变动）；
 4. **多语言一致性**：新加入的文案是否在 4 种语言模板中均已补齐；
-5. **平台兼容**：`#[cfg]` 守卫是否周全，在非目标平台上是否能编译；
+5. **平台兼容（全平台支持）**：`#[cfg]` 守卫是否周全，在非目标平台（Windows/macOS/Linux）上是否存在未导入类型、误删方法或未引用的编译警告；
 6. **资源管理**：是否存在子进程孤儿泄漏风险、WebView 窗口销毁是否及时；
 7. **自动化验证**：是否已通过 `cargo check` 及相关测试验证。
