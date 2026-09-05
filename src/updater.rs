@@ -30,7 +30,10 @@ pub enum UpdateState {
         #[serde(default)]
         detail: String,
     },
-    ReadyToRestart,
+    ReadyToRestart {
+        #[serde(default)]
+        version: String,
+    },
     AlreadyLatest,
     Failed {
         detail: String,
@@ -43,6 +46,12 @@ impl UpdateState {
             progress,
             title: title.into(),
             detail: detail.into(),
+        }
+    }
+
+    pub fn ready_to_restart(version: impl Into<String>) -> Self {
+        Self::ReadyToRestart {
+            version: version.into(),
         }
     }
 }
@@ -80,9 +89,9 @@ pub fn has_pending_launcher_update() -> bool {
     PENDING_LAUNCHER_UPDATE.lock().unwrap().is_some()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateOutcome {
-    pub launcher_updated: bool,
+    pub launcher_updated: Option<String>,
     pub repo_updated: bool,
 }
 
@@ -109,8 +118,8 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
         IS_UPDATING.store(false, Ordering::SeqCst);
         match run_result {
             Ok(outcome) => {
-                if outcome.launcher_updated {
-                    set_update_state(UpdateState::ReadyToRestart);
+                if let Some(version) = outcome.launcher_updated {
+                    set_update_state(UpdateState::ready_to_restart(&version));
                     show_system_notification(
                         &app_handle,
                         &t!("notify.update_title"),
@@ -161,7 +170,7 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<Upda
 
     // 阶段 1：检查启动器自身更新
     set_update_state(UpdateState::Checking);
-    let mut launcher_updated = false;
+    let mut launcher_updated = None;
     match crate::check_and_download_launcher_update_payload(|update| {
         set_update_state(UpdateState::updating(
             update.progress,
@@ -172,7 +181,7 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<Upda
         Ok(Some((version, payload_path))) => {
             info!("Downloaded new launcher update version {version} to {:?}", payload_path);
             set_pending_launcher_update(payload_path);
-            launcher_updated = true;
+            launcher_updated = Some(version);
         }
         Ok(None) => {
             info!("Launcher executable is already up to date");

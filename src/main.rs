@@ -1208,6 +1208,7 @@ fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Resul
     })?;
     Command::new(current_exe)
         .env(LAUNCHER_UPDATE_SKIP_ENV, "1")
+        .env_remove("ALAS_LAUNCHER_PID")
         .spawn()
         .with_context(|| {
             t!(
@@ -1243,9 +1244,9 @@ fn log_helper(msg: &str, target_path: Option<&Path>) {
 
 #[cfg(windows)]
 fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Result<()> {
+    let parent_pid = std::process::id();
     let helper_path = std::env::temp_dir().join(format!(
-        "azurpilot-launcher-update-helper-{}.exe",
-        std::process::id()
+        "azurpilot-launcher-update-helper-{parent_pid}.exe"
     ));
 
     info!("Preparing launcher update: copying current_exe ({:?}) -> helper ({:?})", current_exe, helper_path);
@@ -1264,8 +1265,10 @@ fn replace_launcher_and_restart(current_exe: &Path, update_path: &Path) -> Resul
         .arg(LAUNCHER_UPDATE_APPLY_ARG)
         .arg(current_exe)
         .arg(update_path)
+        .arg(parent_pid.to_string())
         .env(LAUNCHER_UPDATE_SKIP_ENV, "1")
         .env(LAUNCHER_UPDATE_NO_CONSOLE_ENV, "1")
+        .env_remove("ALAS_LAUNCHER_PID") // 必须移除！避免被 ManagedBackend::drop 当作泄漏子进程误杀
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .with_context(|| {
@@ -1297,12 +1300,13 @@ fn try_apply_launcher_update_from_args() -> Result<bool> {
     let update_path = args
         .next()
         .ok_or_else(|| anyhow!("missing launcher update payload path"))?;
+    let parent_pid: Option<u32> = args.next().and_then(|p| p.to_string_lossy().parse().ok());
 
     let target = PathBuf::from(target_path);
     let update = PathBuf::from(update_path);
-    log_helper(&format!("Helper started with PID {}. Target: {:?}, Payload: {:?}", std::process::id(), target, update), Some(&target));
+    log_helper(&format!("Helper started with PID {}. Target: {:?}, Payload: {:?}, Parent PID: {:?}", std::process::id(), target, update, parent_pid), Some(&target));
 
-    match apply_launcher_update_and_restart(target.clone(), update) {
+    match apply_launcher_update_and_restart(target.clone(), update, parent_pid) {
         Ok(()) => {
             log_helper("Update applied successfully, helper exiting.", Some(&target));
             Ok(true)
@@ -1315,10 +1319,27 @@ fn try_apply_launcher_update_from_args() -> Result<bool> {
 }
 
 #[cfg(windows)]
-fn apply_launcher_update_and_restart(target_path: PathBuf, update_path: PathBuf) -> Result<()> {
+fn apply_launcher_update_and_restart(target_path: PathBuf, update_path: PathBuf, parent_pid: Option<u32>) -> Result<()> {
     let mut last_error = None;
-    log_helper("Waiting for parent launcher process to exit...", Some(&target_path));
-    thread::sleep(Duration::from_millis(600));
+    if let Some(pid) = parent_pid {
+        log_helper(&format!("Waiting for parent launcher process (PID {pid}) to exit..."), Some(&target_path));
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::processthreadsapi::OpenProcess;
+        use winapi::um::synchapi::WaitForSingleObject;
+        use winapi::um::winnt::SYNCHRONIZE;
+
+        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if !handle.is_null() {
+            unsafe {
+                WaitForSingleObject(handle, 15000);
+                CloseHandle(handle);
+            }
+        }
+    } else {
+        log_helper("Waiting for parent launcher process to exit...", Some(&target_path));
+        thread::sleep(Duration::from_millis(600));
+    }
+    thread::sleep(Duration::from_millis(200));
 
     for attempt in 1..=60 {
         match move_file_replace(&update_path, &target_path) {
