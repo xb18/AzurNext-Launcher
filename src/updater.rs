@@ -11,7 +11,7 @@ use std::{
 use anyhow::Result;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 use crate::notify::show_system_notification;
@@ -69,6 +69,13 @@ pub fn set_update_state(state: UpdateState) {
     *lock = state;
 }
 
+pub fn emit_and_set_update_state(app: &AppHandle, state: UpdateState) {
+    set_update_state(state.clone());
+    if let Err(e) = app.emit("update-status-changed", &state) {
+        warn!("Failed to emit update status event: {e:#}");
+    }
+}
+
 #[allow(dead_code)]
 pub fn is_update_in_progress() -> bool {
     IS_UPDATING.load(Ordering::SeqCst)
@@ -102,7 +109,7 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
         return Ok("in_progress".to_string());
     }
 
-    set_update_state(UpdateState::Checking);
+    emit_and_set_update_state(&app, UpdateState::Checking);
 
     if !is_background {
         show_system_notification(
@@ -119,23 +126,23 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
         match run_result {
             Ok(outcome) => {
                 if let Some(version) = outcome.launcher_updated {
-                    set_update_state(UpdateState::ready_to_restart(&version));
+                    emit_and_set_update_state(&app_handle, UpdateState::ready_to_restart(&version));
                     show_system_notification(
                         &app_handle,
                         &t!("notify.update_title"),
                         &t!("notify.update_success_restart"),
                     );
                 } else if outcome.repo_updated {
-                    set_update_state(UpdateState::AlreadyLatest);
+                    emit_and_set_update_state(&app_handle, UpdateState::AlreadyLatest);
                     show_system_notification(
                         &app_handle,
                         &t!("notify.update_title"),
                         &t!("notify.update_success"),
                     );
                     thread::sleep(Duration::from_secs(3));
-                    set_update_state(UpdateState::Idle);
+                    emit_and_set_update_state(&app_handle, UpdateState::Idle);
                 } else {
-                    set_update_state(UpdateState::AlreadyLatest);
+                    emit_and_set_update_state(&app_handle, UpdateState::AlreadyLatest);
                     if !is_background {
                         show_system_notification(
                             &app_handle,
@@ -144,13 +151,13 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
                         );
                     }
                     thread::sleep(Duration::from_secs(3));
-                    set_update_state(UpdateState::Idle);
+                    emit_and_set_update_state(&app_handle, UpdateState::Idle);
                 }
             }
             Err(err) => {
                 let err_msg = format!("{err:#}");
                 warn!("Update task failed: {err_msg}");
-                set_update_state(UpdateState::Failed {
+                emit_and_set_update_state(&app_handle, UpdateState::Failed {
                     detail: err_msg.clone(),
                 });
                 show_system_notification(
@@ -158,6 +165,8 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
                     &t!("notify.default_title"),
                     &t!("notify.update_failed", error = err_msg),
                 );
+                thread::sleep(Duration::from_secs(5));
+                emit_and_set_update_state(&app_handle, UpdateState::Idle);
             }
         }
     });
@@ -165,18 +174,21 @@ pub fn trigger_update(app: AppHandle, is_background: bool) -> Result<String> {
     Ok("started".to_string())
 }
 
-fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<UpdateOutcome> {
+fn perform_update_pipeline(app: &AppHandle, is_background: bool) -> Result<UpdateOutcome> {
     info!("Starting update pipeline (is_background={})...", is_background);
 
     // 阶段 1：检查启动器自身更新
-    set_update_state(UpdateState::Checking);
+    emit_and_set_update_state(app, UpdateState::Checking);
     let mut launcher_updated = None;
     match crate::check_and_download_launcher_update_payload(|update| {
-        set_update_state(UpdateState::updating(
-            update.progress,
-            update.title,
-            update.detail,
-        ));
+        emit_and_set_update_state(
+            app,
+            UpdateState::updating(
+                update.progress,
+                update.title,
+                update.detail,
+            ),
+        );
     }) {
         Ok(Some((version, payload_path))) => {
             info!("Downloaded new launcher update version {version} to {:?}", payload_path);
@@ -193,18 +205,24 @@ fn perform_update_pipeline(_app: &AppHandle, is_background: bool) -> Result<Upda
     }
 
     // 阶段 2：检查并拉取 AzurNext 仓库代码与 uv 依赖
-    set_update_state(UpdateState::updating(
-        0,
-        t!("setup.updating"),
-        t!("setup.fetching_patches"),
-    ));
+    emit_and_set_update_state(
+        app,
+        UpdateState::updating(
+            0,
+            t!("setup.updating"),
+            t!("setup.fetching_patches"),
+        ),
+    );
     let cancel = Arc::new(AtomicBool::new(false));
     let repo_updated = match run_repository_and_dependency_update(cancel, |update| {
-        set_update_state(UpdateState::updating(
-            update.progress,
-            update.title,
-            update.detail,
-        ));
+        emit_and_set_update_state(
+            app,
+            UpdateState::updating(
+                update.progress,
+                update.title,
+                update.detail,
+            ),
+        );
     }) {
         Ok(updated) => updated,
         Err(err) => {

@@ -1962,15 +1962,11 @@ fn main() -> Result<()> {
                 let show_item = MenuItemBuilder::new(t!("tray.toggle_visibility"))
                     .id("toggle_visibility")
                     .build(app)?;
-                let update_item = MenuItemBuilder::new(t!("tray.check_update"))
-                    .id("check_update")
-                    .build(app)?;
                 let quit_item = MenuItemBuilder::new(t!("tray.quit"))
                     .id("quit")
                     .build(app)?;
                 let tray_menu = MenuBuilder::new(app)
                     .item(&show_item)
-                    .item(&update_item)
                     .separator()
                     .item(&quit_item)
                     .build()?;
@@ -2009,9 +2005,6 @@ fn main() -> Result<()> {
                                     port,
                                     recreating_main_window_for_menu.clone(),
                                 );
-                            }
-                            "check_update" => {
-                                let _ = crate::updater::trigger_update(app.clone(), false);
                             }
                             "quit" => {
                                 allow_exit.store(true, Ordering::SeqCst);
