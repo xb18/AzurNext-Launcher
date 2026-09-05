@@ -6,7 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
 use anyhow::{anyhow, Result};
+
 #[cfg(target_os = "linux")]
 use notify_rust::{Hint, Notification};
 use rust_i18n::t;

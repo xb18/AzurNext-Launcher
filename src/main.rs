@@ -1848,6 +1848,8 @@ fn main() -> Result<()> {
     let launch_blocked_for_setup = launch_blocked.clone();
     let recreating_main_window_for_single_instance = recreating_main_window.clone();
     let recreating_main_window_for_setup = recreating_main_window.clone();
+    #[allow(unused_variables)]
+    let recreating_main_window_for_run = recreating_main_window.clone();
     let launch_blocked_for_run = launch_blocked.clone();
     let start_minimized_for_run = start_minimized;
 
@@ -4130,6 +4132,20 @@ fn minimize_main_window_to_tray(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     {
         set_macos_activation_policy(app, false);
+    }
+}
+
+#[allow(dead_code)]
+fn restore_main_window_from_any_thread(
+    app: tauri::AppHandle,
+    port: u16,
+    recreating_main_window: Arc<AtomicBool>,
+) {
+    let app_for_restore = app.clone();
+    if let Err(e) = app.run_on_main_thread(move || {
+        restore_main_window_from_tray(&app_for_restore, port, recreating_main_window);
+    }) {
+        warn!("Failed to schedule main window restore: {:?}", e);
     }
 }
 
