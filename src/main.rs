@@ -1950,6 +1950,8 @@ fn main() -> Result<()> {
                     port,
                     recreating_main_window_for_single_instance.clone(),
                 );
+                // 退出二次实例，防止端口冲突
+                std::process::exit(0);
             },
         ))
         .setup(move |app| {
