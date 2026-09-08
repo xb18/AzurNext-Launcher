@@ -72,6 +72,7 @@ pub fn show_notification(
 }
 
 /// 供启动器内部直接使用的通知函数（如更新成功提示）
+#[allow(dead_code)]
 pub fn show_system_notification(
     app: &tauri::AppHandle,
     title: &str,

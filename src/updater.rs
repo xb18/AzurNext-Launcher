@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
-use crate::notify::show_system_notification;
 use crate::setup::{get_update_method, UpdateMethod};
 use crate::LauncherUpdatePlatform;
 
@@ -122,21 +121,13 @@ pub fn clear_pending_update_platform() {
 }
 
 /// 检查启动器外壳更新（第 1 步：仅比对版本，不自动下载）
-pub fn check_launcher_update(app: AppHandle, is_background: bool) -> Result<String> {
+pub fn check_launcher_update(app: AppHandle, _is_background: bool) -> Result<String> {
     if IS_UPDATING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         info!("Update check/download is already in progress; skipping duplicate trigger");
         return Ok("in_progress".to_string());
     }
 
     emit_and_set_update_state(&app, UpdateState::Checking);
-
-    if !is_background {
-        show_system_notification(
-            &app,
-            &t!("notify.check_update_title"),
-            &t!("notify.update_checking"),
-        );
-    }
 
     let app_handle = app.clone();
     thread::spawn(move || {
@@ -154,23 +145,11 @@ pub fn check_launcher_update(app: AppHandle, is_background: bool) -> Result<Stri
                         detail: t!("launcher_update.available_detail", version = version.clone()).to_string(),
                     },
                 );
-                show_system_notification(
-                    &app_handle,
-                    &t!("notify.update_title"),
-                    &t!("notify.update_available", version = version),
-                );
             }
             Ok(None) => {
                 info!("Launcher executable is already up to date");
                 clear_pending_update_platform();
                 emit_and_set_update_state(&app_handle, UpdateState::AlreadyLatest);
-                if !is_background {
-                    show_system_notification(
-                        &app_handle,
-                        &t!("notify.default_title"),
-                        &t!("notify.update_already_latest"),
-                    );
-                }
                 thread::sleep(Duration::from_secs(3));
                 emit_and_set_update_state(&app_handle, UpdateState::Idle);
             }
@@ -181,11 +160,6 @@ pub fn check_launcher_update(app: AppHandle, is_background: bool) -> Result<Stri
                 emit_and_set_update_state(&app_handle, UpdateState::Failed {
                     detail: err_msg.clone(),
                 });
-                show_system_notification(
-                    &app_handle,
-                    &t!("notify.default_title"),
-                    &t!("notify.update_failed", error = err_msg),
-                );
                 thread::sleep(Duration::from_secs(5));
                 emit_and_set_update_state(&app_handle, UpdateState::Idle);
             }
@@ -235,11 +209,6 @@ pub fn start_download_launcher_update(app: AppHandle) -> Result<String> {
                 set_pending_launcher_update(payload_path);
                 clear_pending_update_platform();
                 emit_and_set_update_state(&app_handle, UpdateState::ready_to_restart(&version));
-                show_system_notification(
-                    &app_handle,
-                    &t!("notify.update_title"),
-                    &t!("notify.update_success_restart"),
-                );
             }
             Err(err) => {
                 let err_msg = format!("{err:#}");
@@ -247,11 +216,6 @@ pub fn start_download_launcher_update(app: AppHandle) -> Result<String> {
                 emit_and_set_update_state(&app_handle, UpdateState::Failed {
                     detail: err_msg.clone(),
                 });
-                show_system_notification(
-                    &app_handle,
-                    &t!("notify.default_title"),
-                    &t!("notify.update_failed", error = err_msg),
-                );
                 thread::sleep(Duration::from_secs(5));
                 emit_and_set_update_state(&app_handle, UpdateState::Idle);
             }
