@@ -1939,7 +1939,8 @@ fn main() -> Result<()> {
             focus_window,
             open_external,
             open_folder,
-            get_launcher_info
+            get_launcher_info,
+            ask_confirm
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -2589,6 +2590,24 @@ fn start_download_launcher_update(app_handle: tauri::AppHandle) -> std::result::
 fn cancel_or_dismiss_update(app_handle: tauri::AppHandle) -> std::result::Result<(), String> {
     crate::updater::cancel_or_dismiss_update(&app_handle);
     Ok(())
+}
+
+#[tauri::command]
+fn ask_confirm(
+    app_handle: tauri::AppHandle,
+    title: Option<String>,
+    message: String,
+) -> std::result::Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    let mut builder = app_handle.dialog().message(message);
+    if let Some(t) = title {
+        builder = builder.title(t);
+    }
+    builder = builder.buttons(MessageDialogButtons::OkCancel);
+    if let Some(window) = app_handle.get_webview_window("main") {
+        builder = builder.parent(&window);
+    }
+    Ok(builder.blocking_show())
 }
 
 #[tauri::command]
