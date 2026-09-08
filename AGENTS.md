@@ -7,7 +7,7 @@ alwaysApply: true
 
 > **重要：必须使用中文交流。** 所有回复、注释、文档、提交信息均使用简体中文。代码中的变量名、函数名、结构体名使用英文。
 
-本文件为 AI Agent 在本仓库（`AzurNext-Launcher`）中工作时提供指导与核心约束规范。与 `CLAUDE.md` 互为补充——CLAUDE.md 偏完整架构速查，本文件偏工程规范、编码模式与实操要点。
+本文件为 AI Agent 与开发者在本仓库（`AzurNext-Launcher`）中工作时的**唯一权威核心规范与架构设计基准文档**。所有工程规范、架构速查、编码模式、命令与发版流程均统一在本文件中维护。
 
 ---
 
@@ -29,12 +29,97 @@ alwaysApply: true
 ```bash
 cargo check                     # 极速代码类型与语法检查（日常修改后优先使用）
 cargo test --no-run             # 编译验证测试套件（避免直接执行时的 UAC 管理员提权限制）
+cargo test                      # 运行单元测试
+cargo test test_name_here       # 运行单个测试
 cargo build                     # 构建 Debug 版本
 cargo build --release           # 构建 Release 版本（启用 LTO 优化）
 cargo tauri dev                 # 启动 Tauri 开发调试模式
 ```
 
-> **注意**：Windows 下启动器内置了管理员权限 Manifest，非提权环境下直接执行生成的可执行文件会报 `os error 740`。日常自动化验证推荐运行 `cargo check` 与 `cargo test --no-run`。
+> **注意**：
+> - Windows 下启动器内置了管理员权限 Manifest，非提权环境下直接执行生成的可执行文件会报 `os error 740`。日常自动化验证推荐运行 `cargo check` 与 `cargo test --no-run`。
+> - 构建脚本（`build.rs`）需要 `ALAS_BOOTSTRAP_UV` 环境变量指向要内嵌的 `uv` 二进制文件。本地开发不设置时使用空占位符，启动器会在运行时从 PATH 中查找 `uv` 或通过环境变量 `UV` 指定。
+
+---
+
+## 启动命令行参数
+
+启动器支持以下命令行参数（Windows 下使用 `/` 前缀同样有效）：
+
+| 参数 | 别名 | 说明 |
+|---|---|---|
+| `--lang <locale>` | `--locale <locale>` | 覆盖系统语言，强制使用指定语言显示界面。支持的值：`zh-CN`（简体中文）、`zh-TW`（繁体中文）、`ja`（日语）、`en`（英语）。也支持 `--lang=zh-CN` 形式。 |
+| `--preview-no-update` | `--skip-update`、`--no-update`、`--disable-update` | 跳过仓库更新，直接使用本地文件启动。用于开发调试。 |
+| `--preview-crash` | `--preview-error`、`--crash-preview`、`--error-preview` | 模拟启动失败，停留在错误页面以检查 UI 样式。隐含 `--preview-no-update`。 |
+
+示例：
+```bash
+# 以日语界面启动
+alas-launcher --lang ja
+
+# 以英语界面启动，跳过更新
+alas-launcher --lang en --skip-update
+
+# 预览错误页面
+alas-launcher --preview-crash
+```
+
+---
+
+## 架构与核心源码模块
+
+### 源码模块清单（`src/`）
+
+| 模块 | 行数 | 职责说明 |
+|---|---|---|
+| `main.rs` | ~2140 | Tauri 应用入口、窗口管理、启动画面、系统托盘、时间炸弹、自定义标题栏注入、错误页面、IPC 命令分发 |
+| `backend.rs` | ~330 | 启动/终止 `gui.py` 子进程、端口扫描与占用进程清理、后端生命周期管理与孤儿进程清理 |
+| `setup.rs` | ~1460 | 运行环境配置：Python/uv/adb/git 安装与检查、git 更新拉取、uv 依赖同步、deploy.yaml 配置迁移、运行时清理 |
+| `notify.rs` | ~320 | SSE 通知流（`/api/notify_stream`）、平台原生桌面通知（Windows Toast / Linux notify-rust / macOS Tauri 插件） |
+| `i18n.rs` | ~55 | 国际化管理：系统语言检测、`--lang` 启动参数解析、locale 设置与映射 |
+| `window_util.rs` | ~45 | Windows `CREATE_NO_WINDOW` trait，控制子进程启动时是否创建控制台窗口 |
+
+### 运行时流程与生命周期（Runtime Flow）
+
+1. **初始化**：`main()` 初始化日志（写入 `log/{date}_launcher.txt`），读取 `config/deploy.yaml` 获取 WebUI 端口与配置。
+2. **启动画面**：创建 Tauri 应用，展示 Splash 启动画面窗口（自定义协议 `alas-splash://`），预先隐藏主窗口。
+3. **环境就绪与仓库同步**：后台线程执行 `setup_alas_repo()`：
+   - `ensure_runtime_tools()`：下载 Python 3.14.6（通过 uv managed python）、创建可重定位 `.venv`、复制 uv/adb/git 到 `.venv`；检测到 `.venv` 的 Python 低于 3.14.5 时会自动删除并重建环境；
+   - `git_update()`：根据更新模式调用 Python 脚本 `deploy.git.GitManager` 拉取最新代码（最多重试 20 次）；
+   - `uv_sync_project()`：执行 `uv sync --frozen --no-dev --no-install-project` 同步依赖。
+4. **后端启动与监控**：`ManagedBackend::new()` 启动 `gui.py`，绑定 `ALAS_LAUNCHER_PID` 环境变量，轮询等待端口就绪（60 秒超时）。
+5. **主窗口切换与通信**：建立 SSE 通知流监听，销毁 Splash 窗口，显示并聚焦主窗口。
+
+### 自定义协议与窗口管理
+
+- **自定义 URI 协议**：
+  - `alas-splash://`（Windows/Android 映射为 `http://alas-splash.localhost/`）：内嵌启动画面 HTML/CSS/JS，进度通过 `window.__ALAS_SPLASH_UPDATE()` 回调动态刷新；
+  - `alas-error://`（Windows/Android 映射为 `http://alas-error.localhost/`）：后端连接失败展示页，每秒自动检测重试。
+- **自定义标题栏与原生功能注入**：
+  - Windows 和 Linux 移除原生窗口装饰（`set_decorations(false)`），通过注入脚本生成无边框红绿灯与拖拽区；macOS 保留原生标题栏；
+  - 注入脚本重载 `window.saveAs` 路由到 Tauri `save_as` 命令；
+  - 监听并拦截浏览器后退事件（`history.pushState` + `popstate`）。
+- **跨平台窗口关闭行为**：
+  - **Windows**：弹出退出确认对话框（退出应用 / 最小化到系统托盘），最小化时主动调用 `destroy()` 销毁主窗口以彻底释放 WebView 内存占用，托盘唤醒时重新按需创建；
+  - **macOS**：最小化到托盘，切换 `ActivationPolicy` 为 `Accessory`（自动隐藏 Dock 图标），托盘唤醒恢复时切换回 `Regular`；
+  - **Linux**：直接隐藏主窗口。
+- **零进程泄漏与端口清理保障**：
+  - **端口占用清理**：`backend.rs` 在启动前扫描目标端口（Windows 用 `netstat -ano -p tcp`，Unix 用 `lsof -nP -iTCP:{port} -sTCP:LISTEN -t`），使用 `sysinfo` 强力终止占用端口的僵尸进程（最长等待 5 秒）；
+  - **孤儿进程级联清理**：`ManagedBackend` 的 `Drop` 实现会遍历全局进程环境变量，凡包含 `ALAS_LAUNCHER_PID={当前PID}` 的子进程均予以彻底 Kill，杜绝子进程遗留；单实例新进程唤醒旧窗口时亦会自动清理失效孤儿进程。
+- **配置与安全机制**：
+  - **部署配置自动迁移**：`setup.rs` 中的 `migrate_dependency_config()` 在启动时自动检查 `config/deploy.yaml`，重定向 Python/Git/Adb 路径至 `.venv` 并清理已弃用配置；
+  - **时间炸弹机制**：`Cargo.toml` 中支持 `[package.metadata.alas-launcher.time-bomb]`，启用时启动器通过 HTTP 请求校验远端网络时间（`Date` 请求头），过期则弹窗终止运行；
+  - **Tauri IPC 基础命令**：`save_as`、`download_today_gui_log`、`download_today_launcher_log`、`retry_backend_connection`、`window_hide`、`window_minimize`、`window_toggle_maximize`、`window_close`、`window_start_dragging`、`window_is_maximized`。
+
+### 关键常量与默认配置
+
+- 默认 WebUI 端口：`22267`
+- Python 版本：`3.14.6`（`setup.rs` 中 `PYTHON_VERSION`）
+- Git 更新最大重试：20 次，间隔 1 秒
+- 后端端口等待超时：60 秒
+- 后端连接检查超时：500 毫秒
+- 通知流断线重连间隔：3 秒
+- `UV_PYTHON_INSTALL_MIRROR`：默认优先使用 npmmirror 加速 Python standalone 下载，并以 python-standalone.org 作为备用源
 
 ---
 
@@ -62,11 +147,18 @@ cargo tauri dev                 # 启动 Tauri 开发调试模式
 ### 4. 国际化（i18n）准则
 
 - **严禁硬编码 UI 字符串**：所有面向用户的界面文本、托盘菜单、原生通知、对话框内容，必须同步维护在 `locales/` 下的 4 种语言文件中：
-  - `locales/zh-CN.yml`（简体中文，基准）
+  - `locales/zh-CN.yml`（简体中文，基准语言）
   - `locales/zh-TW.yml`（繁体中文）
-  - `locales/en.yml`（英语）
   - `locales/ja.yml`（日语）
-- 在 Rust 中统一通过 `t!("module.key")` 或 `t!("module.key", param = value)` 宏引用。
+  - `locales/en.yml`（英语）
+- **添加新多语言字符串的标准流程**：
+  1. 在 `locales/zh-CN.yml` 对应功能模块分组下添加 key 和中文文案；
+  2. 同步在 `zh-TW.yml`、`ja.yml`、`en.yml` 添加对应翻译；
+  3. 在 Rust 代码中通过 `t!("module.key")` 调用（需 `.to_string()` 转换为 `String`）；
+  4. 带参数的文本使用 `t!("module.key", param = value)`，YAML 模板中采用 `%{param}` 占位符。
+- **语言检测与回退逻辑**（`src/i18n.rs`）：
+  - 优先级：命令行参数 `--lang` / `--locale` > 系统 locale（`sys-locale` crate） > 回退到 `en`；
+  - 匹配映射：`zh*` → `zh-CN`，`zh-TW`/`zh-HK`/`zh-Hant` → `zh-TW`，`ja*` → `ja`，其余回退为 `en`。
 
 ### 5. 全平台兼容守卫与构建保障（强制支持 Windows / macOS / Linux）
 
@@ -112,6 +204,70 @@ CI 构建会并发执行三大平台的编译与打包，任何单平台编译�
 - **Git Tag 推荐带 `v`**：发版标签统一采用带 `v` 前缀的标准 SemVer 格式（如 **`v2.1.27`**），符合 GitHub Release 与主流开源社区规范；
 - **配置内版本号保持纯数字**：`Cargo.toml` 与 `tauri.conf.json` 中的版本号遵循严格 SemVer，必须保持纯数字（如 `2.1.27`），严禁写入字母 `v`；
 - **CI 全自动兼容剥离**：CI 打包脚本自动剥离 Tag 的 `v` 前缀写入安装包与 `stable.json` 的 `"version"` 字段，同时下载链接保持与 Release Tag 路径一致。无论打 `v2.1.xx` 还是 `2.1.xx` 均能稳定构建。
+
+---
+
+## 版本发布流程与规范
+
+### 1. 版本号升级准则（SemVer）
+
+- **版本号格式**：遵循严格的语义化版本命名（`Major.Minor.Patch`）。
+  - **Patch（补丁版本，如 `2.1.30` -> `2.1.31`）**：日常 Bug 修复、交互细节微调、性能小幅优化、内部代码重构，不改变已有功能行为；
+  - **Minor（次版本，如 `2.1.30` -> `2.2.0`）**：新增向后兼容的桌面系统能力、新功能特性、重要体验升级；
+  - **Major（主版本，如 `2.1.30` -> `3.0.0`）**：整体架构级重构、重大不兼容变更。
+- **配置文件内版本号保持纯数字**：
+  - 源码配置文件 `Cargo.toml`（`version = "X.Y.Z"`）与 `tauri.conf.json`（`"version": "X.Y.Z"`）中必须保持纯数字 SemVer，**严禁包含字母 `v`**；
+  - 修改 `Cargo.toml` 后须运行 `cargo check` 自动同步更新 `Cargo.lock`。
+- **Git Tag 统一带 `v` 前缀**：
+  - 发版标签统一使用带 `v` 前缀的标准 SemVer 格式（如 **`v2.1.31`**），符合 GitHub Release 与主流开源社区规范；
+  - CI 打包脚本（`.github/workflows/package.yml`）会自动剥离 Tag 的 `v` 前缀并同步写入各产物与清单中。
+
+### 2. 发布前强制自检清单（Pre-release Checklist）
+
+发版之前必须依次完成以下自我审查，确保发版质量：
+
+1. **语法与类型检查**：运行 `cargo check`，必须通过且**零警告（0 Warnings）**；
+2. **多平台编译验证**：运行 `cargo test --no-run`，确保测试套件与各平台条件编译顺利通过；
+3. **多语言词条完整性**：检查本次修改涉及的用户可见文本，必须在 `locales/` 下全部 4 种语言（`zh-CN.yml`、`zh-TW.yml`、`ja.yml`、`en.yml`）中均已补齐，严禁漏翻或出现占位符缺失；
+4. **跨平台条件编译守卫**：检查 Windows、macOS、Linux 下的 `#[cfg]` 分支代码，确认非当前宿主平台的专属代码未被误删或破坏；
+5. **工作区清洁度**：运行 `git status` 确认没有未纳入管理的临时测试脚本、临时打包产物或无意义修改。
+
+### 3. 标准发版操作流程（Release Pipeline）
+
+完成开发与自检后，按照以下四步执行标准发版：
+
+#### 步骤一：提升版本号并同步锁文件
+修改 `Cargo.toml` 与 `tauri.conf.json` 中的版本号，随后执行 `cargo check` 刷新 `Cargo.lock`：
+```bash
+# 1. 编辑 Cargo.toml 中的 version = "X.Y.Z"
+# 2. 编辑 tauri.conf.json 中的 "version": "X.Y.Z"
+# 3. 运行检查以更新 Cargo.lock
+cargo check
+```
+
+#### 步骤二：提交版本升级变更
+使用标准的 Conventional Commits 格式提交版本提升改动：
+```bash
+git add Cargo.toml tauri.conf.json Cargo.lock
+git commit -m "chore(release): bump version to X.Y.Z"
+# 或者包含本次核心变更说明：
+# git commit -m "Release X.Y.Z: 修复XX问题并优化XX逻辑"
+```
+
+#### 步骤三：创建带附注的 Git 发版标签
+创建带 `v` 前缀的附注标签（Annotated Tag）：
+```bash
+git tag -a vX.Y.Z -m "Release vX.Y.Z: <简要版本说明与更新要点>"
+```
+
+#### 步骤四：推送主分支与标签触发 CI 打包
+将本地提交与 Tag 推送至远程仓库：
+```bash
+git push origin master
+git push origin vX.Y.Z
+# 或一并推送所有本地标签：
+# git push origin master --tags
+```
 
 ---
 
