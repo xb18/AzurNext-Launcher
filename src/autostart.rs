@@ -190,11 +190,10 @@ fn set_enabled_platform(enabled: bool) -> Result<AutostartStatus> {
         let working_dir = exe.parent().unwrap_or_else(|| Path::new("."));
         let xml_content = build_task_xml(&exe, working_dir);
 
-        let temp_xml = tempfile::Builder::new()
+        let temp_dir = tempfile::Builder::new()
             .prefix("azurnext_task_")
-            .suffix(".xml")
-            .tempfile()?;
-        let temp_path = temp_xml.path();
+            .tempdir()?;
+        let temp_path = temp_dir.path().join("task.xml");
         let utf16: Vec<u16> = std::iter::once(0xFEFF)
             .chain(xml_content.encode_utf16())
             .collect();
@@ -202,7 +201,7 @@ fn set_enabled_platform(enabled: bool) -> Result<AutostartStatus> {
             .into_iter()
             .flat_map(|u| u.to_le_bytes())
             .collect();
-        std::fs::write(temp_path, bytes)?;
+        std::fs::write(&temp_path, bytes)?;
 
         let output = Command::new(&schtasks)
             .args(["/Create", "/TN", TASK_NAME, "/XML", &temp_path.to_string_lossy(), "/F"])
@@ -259,3 +258,42 @@ fn query_platform() -> Result<AutostartStatus> {
 fn set_enabled_platform(_enabled: bool) -> Result<AutostartStatus> {
     Err(anyhow!("Autostart is only supported on Windows"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xml_escape() {
+        assert_eq!(xml_escape("a & b < c > d \" e ' f"), "a &amp; b &lt; c &gt; d &quot; e &apos; f");
+    }
+
+    #[test]
+    fn test_build_task_xml() {
+        let exe = Path::new(r"C:\Program Files (x86)\AzurNext\azurnext.exe");
+        let dir = Path::new(r"C:\Program Files (x86)\AzurNext");
+        let xml = build_task_xml(exe, dir);
+        assert!(xml.contains(r"C:\Program Files (x86)\AzurNext\azurnext.exe"));
+        assert!(xml.contains("--start-minimized"));
+        assert!(xml.contains("<RunLevel>HighestAvailable</RunLevel>"));
+    }
+
+    #[test]
+    fn test_temp_xml_write_and_read() -> Result<()> {
+        let temp_dir = tempfile::Builder::new()
+            .prefix("azurnext_task_test_")
+            .tempdir()?;
+        let temp_path = temp_dir.path().join("task.xml");
+        let sample = "<Task>test</Task>";
+        let utf16: Vec<u16> = std::iter::once(0xFEFF)
+            .chain(sample.encode_utf16())
+            .collect();
+        let bytes: Vec<u8> = utf16.into_iter().flat_map(|u| u.to_le_bytes()).collect();
+        std::fs::write(&temp_path, &bytes)?;
+
+        let read_bytes = std::fs::read(&temp_path)?;
+        assert_eq!(read_bytes, bytes);
+        Ok(())
+    }
+}
+
