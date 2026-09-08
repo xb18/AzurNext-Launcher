@@ -1950,8 +1950,6 @@ fn main() -> Result<()> {
                     port,
                     recreating_main_window_for_single_instance.clone(),
                 );
-                // 退出二次实例，防止端口冲突
-                std::process::exit(0);
             },
         ))
         .setup(move |app| {
@@ -2408,8 +2406,8 @@ fn main() -> Result<()> {
 
 fn initialize_logging() -> Result<WorkerGuard> {
     let log_dir = Path::new("log");
+    fs::create_dir_all(log_dir)?;
     let log_filename = today_launcher_log_filename();
-    truncate_log_file(log_dir, &log_filename)?;
     let file_appender = tracing_appender::rolling::never(log_dir, log_filename);
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
 
@@ -2430,6 +2428,7 @@ fn initialize_logging() -> Result<WorkerGuard> {
     Ok(guard)
 }
 
+#[allow(dead_code)]
 fn truncate_log_file(log_dir: &Path, filename: &str) -> Result<()> {
     fs::create_dir_all(log_dir)?;
     let path = log_dir.join(filename);

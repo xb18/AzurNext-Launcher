@@ -226,6 +226,7 @@ pub struct ManagedBackend {
 
 impl ManagedBackend {
     pub fn new(config: &WebuiLaunchConfig) -> Result<Self> {
+        kill_orphaned_backend_processes();
         std::env::set_var("ALAS_LAUNCHER_PID", format!("{}", std::process::id()));
         let _ = kill_processes_using_port(config.port);
 
@@ -316,6 +317,75 @@ impl ManagedBackend {
             Ok(child.wait()?)
         } else {
             Ok(ExitStatus::default())
+        }
+    }
+}
+
+fn kill_orphaned_backend_processes() {
+    let registry_paths = [
+        Path::new("cache/webui-workers.json"),
+        Path::new("config/webui-workers.json"),
+    ];
+
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_all();
+    let current_pid = std::process::id();
+
+    for path in registry_paths {
+        if let Ok(content) = fs::read_to_string(path) {
+            if let Ok(json) = serde_json::from_str::<JsonValue>(&content) {
+                if let Some(owner_pid) = json.get("owner_pid").and_then(|v| v.as_u64()) {
+                    let pid_u32 = owner_pid as u32;
+                    if pid_u32 != current_pid && pid_u32 != 0 {
+                        let sys_pid = sysinfo::Pid::from_u32(pid_u32);
+                        if let Some(proc) = sys.process(sys_pid) {
+                            info!(
+                                "Killing orphaned WebUI owner process {} ({})",
+                                pid_u32,
+                                proc.name().to_string_lossy()
+                            );
+                            let _ = proc.kill();
+                        }
+                    }
+                }
+                if let Some(workers) = json.get("workers").and_then(|v| v.as_object()) {
+                    for (_name, worker_pid_val) in workers {
+                        if let Some(worker_pid) = worker_pid_val.as_u64() {
+                            let pid_u32 = worker_pid as u32;
+                            if pid_u32 != current_pid && pid_u32 != 0 {
+                                let sys_pid = sysinfo::Pid::from_u32(pid_u32);
+                                if let Some(proc) = sys.process(sys_pid) {
+                                    info!(
+                                        "Killing orphaned worker process {} ({})",
+                                        pid_u32,
+                                        proc.name().to_string_lossy()
+                                    );
+                                    let _ = proc.kill();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    for (pid, process) in sys.processes() {
+        for var in process.environ() {
+            let var_str = var.to_str().unwrap_or_default();
+            if let Some(parent_pid_str) = var_str.strip_prefix("ALAS_LAUNCHER_PID=") {
+                if let Ok(parent_pid) = parent_pid_str.parse::<u32>() {
+                    if parent_pid != current_pid && sys.process(sysinfo::Pid::from_u32(parent_pid)).is_none() {
+                        info!(
+                            "Killing orphaned child process {} with dead launcher parent {}",
+                            pid.as_u32(),
+                            parent_pid
+                        );
+                        let _ = process.kill();
+                    }
+                }
+            }
         }
     }
 }
