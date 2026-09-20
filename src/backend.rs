@@ -40,12 +40,22 @@ pub(crate) fn is_backend_startup_timeout(error: &anyhow::Error) -> bool {
     error.downcast_ref::<BackendStartupTimeout>().is_some()
 }
 
-/// 测试指定端口当前在 127.0.0.1 上是否可用
+/// 测试指定端口当前在 127.0.0.1 和 0.0.0.0 上是否均可用
 pub fn is_port_available(port: u16) -> bool {
     if port == 0 {
         return false;
     }
-    match TcpListener::bind(("127.0.0.1", port)) {
+    let loopback_ok = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => {
+            drop(listener);
+            true
+        }
+        Err(_) => false,
+    };
+    if !loopback_ok {
+        return false;
+    }
+    match TcpListener::bind(("0.0.0.0", port)) {
         Ok(listener) => {
             drop(listener);
             true
@@ -55,18 +65,27 @@ pub fn is_port_available(port: u16) -> bool {
 }
 
 /// 生产环境空闲端口选择器：
-/// 若用户显式配置了非 25548 且非 0 的自定义端口且可用，则遵循用户配置；
-/// 否则（默认或未配置），生产环境自动由系统分配一个可用空闲端口（避开开发固定的 25548）。
+/// 若配置了端口（包含默认的 25548）且当前可用，则优先遵循该配置；
+/// 否则（未配置或配置端口被占用），优先在专用安全段 25550..25650 探测可用端口；
+/// 若全部不可用，最后才由系统动态分配可用空闲端口。
 pub fn pick_production_free_port(configured_port: Option<u16>) -> u16 {
     if let Some(port) = configured_port {
-        if port != 0 && port != 25548 && is_port_available(port) {
-            info!("Production using user-configured custom port: {port}");
+        if port != 0 && is_port_available(port) {
+            info!("Production using configured port: {port}");
             return port;
         }
     }
 
-    // 由系统动态分配空闲端口 (port 0)
-    match TcpListener::bind(("127.0.0.1", 0)) {
+    // 优先在专用安全段 25550..25650 探测可用端口（避开 Windows 49152..65535 动态出站临时端口段）
+    for port in 25550..25650 {
+        if is_port_available(port) {
+            info!("Production found free port: {port}");
+            return port;
+        }
+    }
+
+    // 备选：由系统动态分配空闲端口 (port 0)
+    match TcpListener::bind(("0.0.0.0", 0)) {
         Ok(listener) => {
             if let Ok(addr) = listener.local_addr() {
                 let dynamic_port = addr.port();
@@ -77,14 +96,6 @@ pub fn pick_production_free_port(configured_port: Option<u16>) -> u16 {
         }
         Err(e) => {
             warn!("Failed to bind ephemeral port: {e}");
-        }
-    }
-
-    // 备选空闲端口探测（从 25550 开始，避开 25548 开发端口）
-    for port in 25550..25650 {
-        if is_port_available(port) {
-            info!("Production found free port: {port}");
-            return port;
         }
     }
 
@@ -550,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pick_production_free_port_avoids_development_port() {
+    fn test_pick_production_free_port_uses_default_port_if_available() {
         let port = pick_production_free_port(Some(25548));
         assert!(port > 0);
         assert!(is_port_available(port));
