@@ -1,21 +1,45 @@
+//! 开机自启模块：查询与设置启动器随系统自动启动的状态。
+//!
+//! 仅 Windows 提供完整实现——通过写入当前用户注册表的
+//! `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 键实现开机自启，
+//! 并附加 `--start-minimized` 参数使启动后直接最小化到托盘。
+//! 其他平台返回"不支持"状态，调用方据此在界面上隐藏相关选项。
+
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
+/// 开机自启状态的查询结果。
+///
+/// 序列化后经 Tauri 命令返回给前端展示。
 #[derive(Debug, Serialize)]
 pub struct AutostartStatus {
+    /// 当前自启项是否指向本启动器（即自启已生效）。
     pub enabled: bool,
+    /// 当前平台是否支持开机自启（仅 Windows 为 true）。
     pub supported: bool,
+    /// 注册表 Run 键中当前记录的原始命令行，未设置时为 `None`。
     pub value: Option<String>,
 }
 
+/// 查询当前平台的开机自启状态。
+///
+/// # Errors
+/// Windows 上读取计划任务失败时返回 Err；
+/// 非 Windows 平台始终返回"不支持"的固定状态。
 pub fn query() -> Result<AutostartStatus> {
     query_platform()
 }
 
+/// 启用或禁用开机自启，并返回设置后的最新状态。
+///
+/// # Errors
+/// Windows 上创建或删除计划任务失败时返回 Err；
+/// 非 Windows 平台一律返回 Err（不支持该功能）。
 pub fn set_enabled(enabled: bool) -> Result<AutostartStatus> {
     set_enabled_platform(enabled)
 }
 
+/// Windows 实现：通过计划任务管理开机自启（HighestAvailable 权限避免 UAC 开机拦截）。
 #[cfg(windows)]
 use std::{
     env,
@@ -179,6 +203,7 @@ fn query_platform() -> Result<AutostartStatus> {
     })
 }
 
+/// Windows 实现：按需创建或删除计划任务，然后回查最新状态。
 #[cfg(windows)]
 fn set_enabled_platform(enabled: bool) -> Result<AutostartStatus> {
     cleanup_legacy_run_value();
@@ -237,14 +262,17 @@ fn set_enabled_platform(enabled: bool) -> Result<AutostartStatus> {
         }
     }
 
+    // 统一走查询路径返回，确保调用方拿到的就是计划任务的真实落盘结果
     query_platform()
 }
 
+/// 归一化路径字符串用于比较：去首尾空白、统一斜杠方向、转小写。
 #[cfg(windows)]
 fn normalize_path(value: &str) -> String {
     value.trim().replace('/', "\\").to_ascii_lowercase()
 }
 
+/// 非 Windows 平台：固定返回"不支持"状态，便于前端隐藏自启开关。
 #[cfg(not(windows))]
 fn query_platform() -> Result<AutostartStatus> {
     Ok(AutostartStatus {
@@ -254,6 +282,7 @@ fn query_platform() -> Result<AutostartStatus> {
     })
 }
 
+/// 非 Windows 平台：不支持设置开机自启，直接返回错误。
 #[cfg(not(windows))]
 fn set_enabled_platform(_enabled: bool) -> Result<AutostartStatus> {
     Err(anyhow!("Autostart is only supported on Windows"))

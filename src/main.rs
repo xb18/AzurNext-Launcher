@@ -71,6 +71,7 @@ const MENUBAR_ICON_1X: &[u8] = include_bytes!("../icons/menubar.png");
 #[cfg(windows)]
 const WINDOWS_TRAY_ICON: &[u8] = include_bytes!("../icons/icon.png");
 const SPLASH_BG_VIDEO: &[u8] = include_bytes!("../bg/bg.mp4");
+const SPLASH_PROGRESS_HEAD: &[u8] = include_bytes!("../bg/loading.webp");
 const MI_SANS_FONT: &[u8] = include_bytes!("../fonts/MiSansLauncher.ttf");
 const BACKEND_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const BACKEND_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1484,12 +1485,14 @@ mod tests {
     fn test_english_splash_i18n_uses_json_literals() {
         rust_i18n::set_locale("en");
 
-        let html = splash_redesigned_shell_html("video", "font");
+        let html = splash_redesigned_shell_html("video", "head", "font");
 
         assert!(html.contains(r#""defaultTip":"Sakura Empire's cherry blossoms"#));
         assert!(!html.contains("const defaultTip = '"));
         assert!(html.contains("window.__ALAS_SPLASH_READY = true;"));
         assert!(html.contains("data:video/mp4;base64,video"));
+        assert!(html.contains("data:image/webp;base64,head"));
+        assert!(html.contains("id=\"progress-head\""));
         assert!(html.contains("font-family: \"MiSans\""));
         assert!(html.contains("data:font/ttf;base64,font"));
         assert!(!html.contains("text-transform: uppercase;"));
@@ -1497,7 +1500,7 @@ mod tests {
 
     #[test]
     fn test_splash_includes_optional_uv_progress() {
-        let html = splash_redesigned_shell_html("video", "font");
+        let html = splash_redesigned_shell_html("video", "head", "font");
 
         assert!(html.contains("id=\"uv-progress-container\""));
         assert!(html.contains("payload.uv_progress"));
@@ -1521,7 +1524,7 @@ mod tests {
 
     #[test]
     fn test_titlebars_use_webview_draggable_regions_for_touch_dragging() {
-        let splash_html = splash_redesigned_shell_html("video", "font");
+        let splash_html = splash_redesigned_shell_html("video", "head", "font");
 
         assert!(splash_html.contains("touch-action: none;"));
         assert!(splash_html.contains("addEventListener('pointerdown'"));
@@ -2450,7 +2453,9 @@ fn save_as(app_handle: tauri::AppHandle, filename: &str, data: &str) {
                     let file_path = path
                         .as_ref()
                         .and_then(FilePath::as_path)
-                        .ok_or_else(|| anyhow!("Invalid file path {:?}", &path))?;
+                        .ok_or_else(|| {
+                            anyhow!(t!("errors.invalid_file_path", path = format!("{path:?}")))
+                        })?;
                     fs::write(file_path, &decoded_data)?;
                     info!("Saved file to {:?}", file_path);
                     Ok(())
@@ -2505,7 +2510,9 @@ fn download_log_file(
                 let file_path = path
                     .as_ref()
                     .and_then(FilePath::as_path)
-                    .ok_or_else(|| anyhow!("Invalid file path {:?}", &path))?;
+                    .ok_or_else(|| {
+                        anyhow!(t!("errors.invalid_file_path", path = format!("{path:?}")))
+                    })?;
                 fs::write(file_path, &data)?;
                 info!("Saved {} log to {:?}", log_name_for_save, file_path);
                 Ok(())
@@ -2858,13 +2865,17 @@ fn backend_url(port: u16) -> String {
 
 fn splash_response() -> tauri::http::Response<Vec<u8>> {
     let video_bg_b64 = BASE64_STANDARD.encode(SPLASH_BG_VIDEO);
+    let progress_head_b64 = BASE64_STANDARD.encode(SPLASH_PROGRESS_HEAD);
     let mi_sans_font_b64 = BASE64_STANDARD.encode(MI_SANS_FONT);
     tauri::http::Response::builder()
         .header(
             tauri::http::header::CONTENT_TYPE,
             "text/html; charset=utf-8",
         )
-        .body(splash_redesigned_shell_html(&video_bg_b64, &mi_sans_font_b64).into_bytes())
+        .body(
+            splash_redesigned_shell_html(&video_bg_b64, &progress_head_b64, &mi_sans_font_b64)
+                .into_bytes(),
+        )
         .unwrap()
 }
 
@@ -2872,7 +2883,13 @@ fn check_backend_connection(port: u16) -> Result<()> {
     let address: SocketAddr = format!("127.0.0.1:{port}").parse()?;
     TcpStream::connect_timeout(&address, BACKEND_CONNECT_TIMEOUT)
         .map(|_| ())
-        .map_err(|e| anyhow!("Unable to connect to local backend at {address}: {e}"))
+        .map_err(|e| {
+            anyhow!(t!(
+                "errors.backend_unreachable",
+                address = address.to_string(),
+                error = e.to_string()
+            ))
+        })
 }
 
 fn wait_for_backend_connection(port: u16, timeout: Duration) -> Result<()> {
@@ -2888,7 +2905,16 @@ fn wait_for_backend_connection(port: u16, timeout: Duration) -> Result<()> {
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow!(t!("errors.backend_timeout"))))
+    Err(backend_unready_error(last_error))
+}
+
+/// 生成后端未就绪的错误说明，若有 GUI 日志中的失败原因则一并附加。
+fn backend_unready_error(last_error: Option<anyhow::Error>) -> anyhow::Error {
+    let base_error = last_error.unwrap_or_else(|| anyhow!(t!("errors.backend_timeout")));
+    match crate::backend::read_backend_failure_reason() {
+        Some(reason) => anyhow!("{base_error} ({reason})"),
+        None => base_error,
+    }
 }
 
 fn navigate_backend_or_error(window: &WebviewWindow, port: u16) -> Result<bool> {
@@ -3413,7 +3439,11 @@ fn backend_error_html(port: u16, error_detail: &str) -> String {
     )
 }
 
-fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> String {
+fn splash_redesigned_shell_html(
+    video_bg_b64: &str,
+    progress_head_b64: &str,
+    mi_sans_font_b64: &str,
+) -> String {
     let i18n = serde_json::json!({
         "defaultTip": t!("tips.17"),
         "loading": t!("splash.loading_badge"),
@@ -3693,6 +3723,7 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
     white-space: pre-line;
   }
   .progress-container {
+    --progress: 4%;
     position: relative;
     margin-bottom: 15px;
   }
@@ -3705,7 +3736,7 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
     backdrop-filter: blur(5px);
   }
   .progress-bar-fill {
-    width: 4%;
+    width: var(--progress);
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
@@ -3728,6 +3759,21 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
   }
   .progress-bar-fill-error::after {
     display: none;
+  }
+  .progress-head {
+    position: absolute;
+    left: clamp(20px, var(--progress), calc(100% - 20px));
+    top: -39px;
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+    transform: translateX(-52%);
+    filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.32));
+    pointer-events: none;
+    transition: left 0.35s ease, opacity 0.2s ease;
+  }
+  body.error-state .progress-head {
+    opacity: 0;
   }
   .progress-percentage {
     position: absolute;
@@ -3952,7 +3998,8 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
         <p id="detail" class="sub-action-text">$I18N_WEBUI_INIT</p>
       </div>
 
-      <div class="progress-container">
+      <div id="progress-container" class="progress-container">
+        <img id="progress-head" class="progress-head" src="data:image/webp;base64,$PROGRESS_HEAD" alt="" aria-hidden="true" draggable="false">
         <div id="progress-pct" class="progress-percentage">4%</div>
         <div class="progress-bar-bg">
           <div id="progress-fill" class="progress-bar-fill" style="width: 4%;"></div>
@@ -4018,6 +4065,7 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
       const badgeText = document.getElementById('badge-text');
       const spinner = document.getElementById('spinner');
       const errorDot = document.getElementById('error-dot');
+      const progressContainer = document.getElementById('progress-container');
       const progressFill = document.getElementById('progress-fill');
       const progressPct = document.getElementById('progress-pct');
       const uvProgressContainer = document.getElementById('uv-progress-container');
@@ -4037,6 +4085,7 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
         : i18n.progressMetaReady;
 
       const progress = Math.max(0, Math.min(100, Number(payload.progress || 0)));
+      progressContainer.style.setProperty('--progress', progress + '%');
       progressFill.style.width = progress + '%';
       progressPct.textContent = progress + '%';
 
@@ -4128,6 +4177,7 @@ fn splash_redesigned_shell_html(video_bg_b64: &str, mi_sans_font_b64: &str) -> S
 </body>
 </html>"#
     .replace("$VIDEO_BG", video_bg_b64)
+    .replace("$PROGRESS_HEAD", progress_head_b64)
     .replace("$MI_SANS_FONT", mi_sans_font_b64)
     .replace("$LAUNCHER_VERSION", env!("CARGO_PKG_VERSION"))
     .replace("$I18N_JSON", &i18n_json)
@@ -4149,7 +4199,7 @@ fn create_main_window(app: &tauri::AppHandle, port: u16) -> Result<WebviewWindow
         .windows
         .iter()
         .find(|w| w.label == "main")
-        .ok_or_else(|| anyhow!("Main window config not found"))?;
+        .ok_or_else(|| anyhow!(t!("errors.main_window_missing")))?;
 
     let app_for_navigation = app.clone();
     let main_window = tauri::WebviewWindowBuilder::from_config(app, main_config)?
