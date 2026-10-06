@@ -40,11 +40,13 @@ pub fn set_enabled(enabled: bool) -> Result<AutostartStatus> {
 }
 
 /// Windows 实现：通过计划任务管理开机自启（HighestAvailable 权限避免 UAC 开机拦截）。
+#[cfg(any(windows, test))]
+use std::path::Path;
 #[cfg(windows)]
 use std::{
     env,
     os::windows::process::CommandExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
 };
 #[cfg(windows)]
@@ -53,7 +55,7 @@ use tracing::{info, warn};
 #[cfg(windows)]
 const TASK_NAME: &str = "AzurNext";
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 const START_MINIMIZED_ARG: &str = "--start-minimized";
 
 #[cfg(windows)]
@@ -84,7 +86,7 @@ fn cleanup_legacy_run_value() {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -93,7 +95,7 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn build_task_xml(exe_path: &Path, working_dir: &Path) -> String {
     let exe_str = xml_escape(&exe_path.to_string_lossy());
     let dir_str = xml_escape(&working_dir.to_string_lossy());
