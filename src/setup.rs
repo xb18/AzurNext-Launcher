@@ -572,6 +572,7 @@ fn check_all_dependencies_synchronized() -> bool {
         .args([
             "sync",
             "--check",
+            "--frozen",
             "--offline",
             "--no-dev",
             "--no-install-project",
