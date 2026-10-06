@@ -1898,15 +1898,19 @@ fn main() -> Result<()> {
     let setup_completed = Arc::new(AtomicBool::new(false));
     let recreating_main_window = Arc::new(AtomicBool::new(false));
 
+    let start_minimized = Arc::new(AtomicBool::new(start_minimized));
     let allow_exit_for_setup = allow_exit.clone();
     let launch_blocked_for_setup = launch_blocked.clone();
     let recreating_main_window_for_single_instance = recreating_main_window.clone();
+    let start_minimized_for_single_instance = start_minimized.clone();
     #[allow(unused_variables)]
     let recreating_main_window_for_setup = recreating_main_window.clone();
     #[allow(unused_variables)]
+    let start_minimized_for_setup = start_minimized.clone();
+    #[allow(unused_variables)]
     let recreating_main_window_for_run = recreating_main_window.clone();
     let launch_blocked_for_run = launch_blocked.clone();
-    let start_minimized_for_run = start_minimized;
+    let start_minimized_for_run = start_minimized.clone();
 
     info!("Starting Webview...");
     tauri::Builder::default()
@@ -1953,6 +1957,7 @@ fn main() -> Result<()> {
                     app,
                     port,
                     recreating_main_window_for_single_instance.clone(),
+                    start_minimized_for_single_instance.clone(),
                 );
             },
         ))
@@ -1984,8 +1989,11 @@ fn main() -> Result<()> {
                 info!("Creating system tray...");
                 let allow_exit = allow_exit_for_setup.clone();
                 let recreating_main_window_for_menu = recreating_main_window_for_setup.clone();
+                let start_minimized_for_menu = start_minimized_for_setup.clone();
                 #[cfg(windows)]
                 let recreating_main_window_for_tray = recreating_main_window_for_setup.clone();
+                #[cfg(windows)]
+                let start_minimized_for_tray = start_minimized_for_setup.clone();
                 let show_item = MenuItemBuilder::new(t!("tray.toggle_visibility"))
                     .id("toggle_visibility")
                     .build(app)?;
@@ -2031,6 +2039,7 @@ fn main() -> Result<()> {
                                     app,
                                     port,
                                     recreating_main_window_for_menu.clone(),
+                                    start_minimized_for_menu.clone(),
                                 );
                             }
                             "quit" => {
@@ -2061,6 +2070,7 @@ fn main() -> Result<()> {
                                 &app,
                                 port,
                                 recreating_main_window_for_tray.clone(),
+                                start_minimized_for_tray.clone(),
                             );
                         }
 
@@ -2108,11 +2118,11 @@ fn main() -> Result<()> {
                     let setup_cancel_requested = setup_cancel_requested.clone();
                     let setup_running = setup_running.clone();
                     let setup_completed = setup_completed.clone();
-                    let start_minimized = start_minimized_for_run;
+                    let start_minimized = start_minimized_for_run.clone();
                     thread::spawn(move || {
                         setup_running.store(true, Ordering::SeqCst);
                         let splash = app_handle.get_webview_window("splash").unwrap();
-                        initialize_splash(&splash, !start_minimized);
+                        initialize_splash(&splash, !start_minimized.load(Ordering::SeqCst));
                         let last_progress = Cell::new(0u8);
                         let mut status_updater = |mut update: SplashUpdate| {
                             update.progress = update.progress.max(last_progress.get());
@@ -2157,7 +2167,7 @@ fn main() -> Result<()> {
                                 Ok(false) => {}
                                 Err(e) => {
                                     warn!("Required launcher update failed: {e:#}");
-                                    if start_minimized {
+                                    if start_minimized.load(Ordering::SeqCst) {
                                         let _ = reveal_window(&splash);
                                     }
                                     launcher_status_updater(SplashUpdate::error(
@@ -2176,7 +2186,7 @@ fn main() -> Result<()> {
                         }
 
                         if preview_crash {
-                            if start_minimized {
+                            if start_minimized.load(Ordering::SeqCst) {
                                 let _ = reveal_window(&splash);
                             }
                             status_updater(
@@ -2212,7 +2222,7 @@ fn main() -> Result<()> {
                             if setup_cancel_requested.load(Ordering::SeqCst) {
                                 return;
                             }
-                            if start_minimized {
+                            if start_minimized.load(Ordering::SeqCst) {
                                 let _ = reveal_window(&splash);
                             }
                             status_updater(SplashUpdate::error(
@@ -2244,7 +2254,7 @@ fn main() -> Result<()> {
                                 if setup_cancel_requested.load(Ordering::SeqCst) {
                                     return;
                                 }
-                                if start_minimized {
+                                if start_minimized.load(Ordering::SeqCst) {
                                     let _ = reveal_window(&splash);
                                 }
                                 status_updater(SplashUpdate::error(
@@ -2275,7 +2285,7 @@ fn main() -> Result<()> {
                         if let Err(e) = navigate_backend_or_error(&window, port) {
                             error!("Failed to navigate main window: {:?}", e);
                         }
-                        if start_minimized {
+                        if start_minimized.load(Ordering::SeqCst) {
                             info!("Backend is ready; keeping main window hidden in tray");
                             let _ = window.hide();
                         } else {
@@ -2321,6 +2331,7 @@ fn main() -> Result<()> {
                         app_handle.clone(),
                         port,
                         recreating_main_window_for_run.clone(),
+                        start_minimized_for_run.clone(),
                     );
                 }
                 tauri::RunEvent::WindowEvent {
@@ -4274,10 +4285,16 @@ fn restore_main_window_from_any_thread(
     app: tauri::AppHandle,
     port: u16,
     recreating_main_window: Arc<AtomicBool>,
+    start_minimized: Arc<AtomicBool>,
 ) {
     let app_for_restore = app.clone();
     if let Err(e) = app.run_on_main_thread(move || {
-        restore_main_window_from_tray(&app_for_restore, port, recreating_main_window);
+        restore_main_window_from_tray(
+            &app_for_restore,
+            port,
+            recreating_main_window,
+            start_minimized,
+        );
     }) {
         warn!("Failed to schedule main window restore: {:?}", e);
     }
@@ -4287,7 +4304,18 @@ fn restore_main_window_from_tray(
     app: &tauri::AppHandle,
     port: u16,
     recreating_main_window: Arc<AtomicBool>,
+    start_minimized: Arc<AtomicBool>,
 ) {
+    // 若启动阶段尚未完成（Splash 窗口仍存在），唤醒时应显示 Splash 启动进度并取消静默最小化标记，
+    // 严禁直接显示尚处于 about:blank 的预创建主窗口导致无边框白屏。
+    if let Some(splash) = app.get_webview_window("splash") {
+        start_minimized.store(false, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        set_macos_activation_policy(app, true);
+        let _ = reveal_window(&splash);
+        return;
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
         set_macos_activation_policy(app, true);
@@ -4327,16 +4355,22 @@ fn toggle_main_window_visibility(
     app: &tauri::AppHandle,
     port: u16,
     recreating_main_window: Arc<AtomicBool>,
+    start_minimized: Arc<AtomicBool>,
 ) {
+    if app.get_webview_window("splash").is_some() {
+        restore_main_window_from_tray(app, port, recreating_main_window, start_minimized);
+        return;
+    }
+
     if let Some(window) = app.get_webview_window("main") {
         let is_visible = window.is_visible().unwrap_or(false);
         let is_minimized = window.is_minimized().unwrap_or(false);
         if is_visible && !is_minimized {
             minimize_main_window_to_tray(app);
         } else {
-            restore_main_window_from_tray(app, port, recreating_main_window);
+            restore_main_window_from_tray(app, port, recreating_main_window, start_minimized);
         }
     } else {
-        restore_main_window_from_tray(app, port, recreating_main_window);
+        restore_main_window_from_tray(app, port, recreating_main_window, start_minimized);
     }
 }
