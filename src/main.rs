@@ -2276,23 +2276,42 @@ fn main() -> Result<()> {
                                     crate::setup::get_tip()
                                 )),
                         );
-                        let _ = splash.destroy();
-                        debug!("Destroyed splash window after startup");
-
-                        info!("Webview is ready");
-                        let window = app_handle.get_webview_window("main").unwrap();
-                        window.set_resizable(true).unwrap();
-                        if let Err(e) = navigate_backend_or_error(&window, port) {
-                            error!("Failed to navigate main window: {:?}", e);
-                        }
-                        if start_minimized.load(Ordering::SeqCst) {
-                            info!("Backend is ready; keeping main window hidden in tray");
-                            let _ = window.hide();
-                        } else {
-                            reveal_window(&window).unwrap();
-                        }
+                        // 先标记启动流程已完成，防止销毁 Splash 窗口时触发 ExitRequested 被误判为启动中止
                         setup_completed.store(true, Ordering::SeqCst);
                         setup_running.store(false, Ordering::SeqCst);
+
+                        info!("Webview is ready");
+                        let window_opt = match app_handle.get_webview_window("main") {
+                            Some(w) => Some(w),
+                            None if !start_minimized.load(Ordering::SeqCst) => {
+                                match create_main_window(&app_handle, port) {
+                                    Ok(w) => Some(w),
+                                    Err(e) => {
+                                        error!("Failed to recreate main window after startup: {:?}", e);
+                                        None
+                                    }
+                                }
+                            }
+                            None => None,
+                        };
+
+                        if let Some(window) = window_opt {
+                            let _ = window.set_resizable(true);
+                            if let Err(e) = navigate_backend_or_error(&window, port) {
+                                error!("Failed to navigate main window: {:?}", e);
+                            }
+                            if start_minimized.load(Ordering::SeqCst) {
+                                info!("Backend is ready; keeping main window hidden in tray");
+                                let _ = window.hide();
+                            } else if let Err(e) = reveal_window(&window) {
+                                error!("Failed to reveal main window: {:?}", e);
+                            }
+                        } else {
+                            info!("Backend is ready; main window will be created on demand from tray");
+                        }
+
+                        let _ = splash.destroy();
+                        debug!("Destroyed splash window after startup");
                     });
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {
